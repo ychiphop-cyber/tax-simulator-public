@@ -161,8 +161,9 @@ function fairRateOne(pub, year) {
 }
 // P0-3B (지방세법 §110 ③ + 시행령 §109의2, 2024 시행): 주택 재산세 과세표준상한제
 // 과세표준상한액 = 직전연도 과세표준 + (당해연도 과세표준 − 직전연도) × 5%
-function propertyTax(pub, isOneHH, urban = true, prevBase = null, year = null) {
-  const fair = isOneHH ? fairRateOne(pub, year) : PROP.fairOther;
+function propertyTax(pub, isOneHH, urban = true, prevBase = null, year = null, keepSpecial = false) {
+  // P1-2: keepSpecial=true → 1주택 43~45% 특례가 2027년 이후에도 연장된다고 가정 (기본값은 일몰)
+  const fair = isOneHH ? fairRateOne(pub, keepSpecial ? null : year) : PROP.fairOther;
   let base = pub * fair;
   const rawBase = base;
   let capped = false;
@@ -386,7 +387,7 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
     // P0-3B: house.id별 직전연도 과세표준 체이닝 (prevMap에 저장)
     const pbKey = `pb|${scen}|${h.id}`;
     const prevBase = prevMap ? prevMap[pbKey] : null;
-    const pt = propertyTax(pub, isOnePT, urban, prevBase, year);
+    const pt = propertyTax(pub, isOnePT, urban, prevBase, year, !!inp.assumptions.propFairKeep);
     if (prevMap) prevMap[pbKey] = pt.base;
     return { h, pub, pt };
   });

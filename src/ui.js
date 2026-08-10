@@ -74,7 +74,7 @@ function defaultInput() {
     acquire: { price: 9, housesAfter: 2, adj: true, big85: false, temp2: true, first: false },
     joint: { houseId: null, share: 50, prior: 0 },
     gift: { type: 'general', relation: 'child', houseId: null, share: 100, value: '', debt: 0, prior: 0, date: '2026-10' },
-    assumptions: { baseYear: 2026, policyView: 'both', marketGrowth: 0, officialGrowth: 0, urban: true }
+    assumptions: { baseYear: 2026, policyView: 'both', marketGrowth: 0, officialGrowth: 0, urban: true, propFairKeep: false }
   };
 }
 let S = { step: 1, inp: defaultInput() };
@@ -389,6 +389,8 @@ function renderStep5() {
   $('#gOfficial').value = S.inp.assumptions.officialGrowth;
   $('#gOfficialOut').textContent = S.inp.assumptions.officialGrowth + '%';
   $('#optUrban').checked = S.inp.assumptions.urban !== false;
+  const fk = $('#optFairKeep');
+  if (fk) fk.checked = !!S.inp.assumptions.propFairKeep;
 }
 
 /* ── 스텝 6 ── */
@@ -439,7 +441,8 @@ function renderStep6() {
       <div class="sbody"><b>${ppTxt}</b>${ppDetail}</div></div>
     <div class="sumcard"><div class="shead"><b>가정</b><button class="iconb" data-goto="5">수정</button></div>
       <div class="sbody">${a.policyView === 'both' ? '현행 + 8·3 정부안 비교' : a.policyView === 'current' ? '현행법만' : '8·3 정부안만'} ·
-      시세 상승 연 ${a.marketGrowth}% · 공시 상승 연 ${a.officialGrowth}% · 도시지역분 ${a.urban ? '포함' : '제외'}</div></div>`;
+      시세 상승 연 ${a.marketGrowth}% · 공시 상승 연 ${a.officialGrowth}% · 도시지역분 ${a.urban ? '포함' : '제외'} ·
+      재산세 1주택 특례비율 2027~ ${a.propFairKeep ? '유지 가정' : '종료(60%) 가정'}</div></div>`;
 
   const li = (t, items) => items.map(x => `<li>${statChip(t)}<span>${esc(x.msg)}</span></li>`).join('');
   $('#confirmStatus').innerHTML = `
@@ -1044,10 +1047,13 @@ function renderDetailInner(c, year, scen) {
   const rows = scen === 'current' ? c.cur : c.ref;
   const r = rows.find(x => x.year === year) || rows[0];
   let h = '';
-  h += `<h3 class="steph">재산세 (물건별 · 2026 현행)</h3>`;
+  h += `<h3 class="steph">재산세 (물건별 · 현행 지방세)</h3>`;
   r.prop.rows.forEach((pr, i) => {
-    h += kvRow(`${esc(pr.h.name || '주택 ' + (i + 1))} — 공시 ${eok(pr.pub)} × ${Math.round(pr.pt.fair * 100)}%${pr.pt.useSpec ? ' · 특례세율' : ''}`,
-      `본세 ${won(pr.pt.main)} · 도시 ${won(pr.pt.city)} · 교육 ${won(pr.pt.edu)}`);
+    const nm = esc(pr.h.name || '주택 ' + (i + 1));
+    h += kvRow(`${nm} — 공시 ${eok(pr.pub)} × ${Math.round(pr.pt.fair * 100)}%`, `= ${eok(pr.pt.rawBase)}`);
+    if (pr.pt.capped) h += kvRow('　과세표준상한 적용 (지방세법 §110③, 연 5%)', `→ 과세표준 ${eok(pr.pt.base)}`);
+    else h += kvRow('　과세표준', eok(pr.pt.base));
+    h += kvRow(`　세율 적용${pr.pt.useSpec ? ' (1주택 특례세율)' : ''}`, `본세 ${won(pr.pt.main)} · 도시 ${won(pr.pt.city)} · 교육 ${won(pr.pt.edu)}`);
   });
   h += kvRow('재산세 합계', won(r.prop.total), 'total');
   const j = r.jong;
@@ -1098,6 +1104,7 @@ function basisHTML(c) {
     ${est.length ? `<h3 class="mini-h">추정값</h3><ul class="notes">${est.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
     <h3 class="mini-h">출처</h3>
     <ul class="notes">${RULES.sources.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
+    <div class="notebox"><b>재산세 가정</b> — 1세대 1주택 재산세 공정시장가액비율 특례(공시 3억 이하 43% · 6억 이하 44% · 초과 45%)는 매년 시행령으로 정하며 <b>2026년분까지 확정</b>되어 있습니다. 2027년 이후는 ${c.inp.assumptions.propFairKeep ? '특례가 <b>연장 유지</b>된다고 가정했습니다. 일몰 시 실제 세액은 이보다 높아질 수 있습니다' : '특례 <b>종료(표준 60% 복귀)</b>를 가정했습니다. 연장 시 실제 세액은 이보다 낮아질 수 있습니다'}. 이 가정은 현행·정부안 두 시나리오에 동일하게 적용되어 증감액 비교에는 영향이 없습니다. STEP 5에서 바꿀 수 있습니다.</div>
     <div class="warnbox"><b>참고용 안내</b> — 본 시뮬레이터는 공개된 법령·정부 발표와 사용자가 입력한 정보를 바탕으로 한 <b>참고용 계산 도구</b>입니다. 정부안은 국회 심의 및 최종 법령에 따라 변경될 수 있으며, 실제 세액은 개인별 사실관계에 따라 달라질 수 있습니다. 신고·매도·증여·명의 변경 등 중요한 의사결정 전에는 세무전문가에게 확인하시기 바랍니다.</div>
     <div class="chiprow no-print" style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
       <button class="btn" id="btnEdit">입력 수정하기</button>
@@ -1390,6 +1397,7 @@ function wire() {
   bind('#gMarket', 'assumptions.marketGrowth', { out: '#gMarketOut', suffix: '%' });
   bind('#gOfficial', 'assumptions.officialGrowth', { out: '#gOfficialOut', suffix: '%' });
   bind('#optUrban', 'assumptions.urban', { evt: 'change' });
+  bind('#optFairKeep', 'assumptions.propFairKeep', { evt: 'change' });
 
   // STEP 6 — 수정 점프
   $('#confirmSummary').addEventListener('click', e => {

@@ -233,5 +233,25 @@ console.log('\nP0-2 상속 특례 만료 — 2029년부터 다주택 전환');
   TB('결론 extra에 2029 전환 문구', !!(concl.extra && concl.extra.includes('2029')), String(concl.extra).slice(0, 60));
 }
 
+/* ── P1-2 · 재산세 특례비율 유지/일몰 토글 ─────────────────────────── */
+console.log('\nP1-2 재산세 1주택 특례비율 가정 토글');
+{
+  const mk = keep => {
+    const inp = mat(inputOf({
+      situation: 'one_live',
+      houses: [house({ official: 25.6, acqPrice: 14, acqDate: '2016-05', ownerType: 'joint', shares: { me: 50, spouse: 50, other: 0 }, liveMode: 'none' })]
+    }));
+    inp.assumptions.propFairKeep = keep;
+    return inp;
+  };
+  const sunset = E.holdSim(mk(false), 'current');
+  const keep = E.holdSim(mk(true), 'current');
+  T('기본(일몰) 2027 = 793만 (골든 유지)', sunset[1].holdTax, 793);
+  TB('유지 가정 시 2027 재산세 감소', keep[1].prop.total < sunset[1].prop.total - 10 * 만,
+    `${(keep[1].prop.total / 만).toFixed(0)}만 vs ${(sunset[1].prop.total / 만).toFixed(0)}만`);
+  TB('유지 가정 2027 공정비율 45%', Math.abs(keep[1].prop.rows[0].pt.fair - 0.45) < 1e-9, String(keep[1].prop.rows[0].pt.fair));
+  TB('2026년은 두 가정 동일', Math.abs(keep[0].holdTax - sunset[0].holdTax) < 1, '');
+}
+
 console.log(`\n골든 케이스: ${pass} 통과 / ${fail} 실패`);
 process.exit(fail ? 1 : 0);
