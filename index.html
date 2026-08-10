@@ -572,19 +572,32 @@ footer ul{padding-left:16px;margin:8px 0}
 const 억 = 1e8, 만 = 1e4;
 
 const RULES = {
-  version: 'rules-2026.08.09-r1',
+  version: 'rules-2026.08.09-r3',
   reviewedAt: '2026-08-09',
   officialRatio: 0.69, // 2026년 공동주택 공시가격 현실화율(참고값) — 시세→공시 추정에만 사용
   policy: {
     current: { code: 'current', label: '현행 확정법', badge: '현행법 · 확정', status: 'enacted' },
     reform:  { code: 'reform',  label: '8·3 정부안',  badge: '정부안 · 국회 심의 전', status: 'draft_proposal' }
   },
+  // r2 (2026-08-09) P0 수정 반영:
+  //   P0-1 종부세 세액공제 800/600만원 한도 (reform)
+  //   P0-2 장특공제 20/10억원 한도 (reform)
+  //   P0-3B 재산세 과세표준상한제 5% (현행법)
+  //   P0-4 부담부증여 취득세 이중계산 (지방세법 §10의2 ⑥, 현행법)
+  //   P0-5 분양권·입주권 양도·취득 주택수 산입 (소득세법 §88 10호·지방세법 §13의3, 현행법)
+  //   P0-6 상속·지방저가·인구감소 특례 종부세 1세대1주택 판정 반영 (종부세법 §8 ④, 현행법)
+  //   P0-3A' 2027+ 1세대1주택 공정시장가액비율 60% 복귀 가정 (시행령 §109 ①-2 미개정 기본)
+  // r3 (2026-08-09) 정부 문답자료(8·3) 추가 반영:
+  //   FMV(2028+) 판정에 isOne 인자 도입 — 부부공동명의 개별납부(각자 인별 isOne=false)에서 조정지역 주택이면 80% 적용,
+  //   비조정 또는 1세대1주택자(특례 신청 포함)는 70% 유지 (문답자료 p.45)
   sources: [
     '기획재정부 「2026년 세제개편안」 상세본·문답자료 (2026.8.3)',
     '국토교통부 「2026년 공동주택 공시가격 결정·공시」',
     '국세청 증여세 항목별 설명 · 증여재산의 평가',
-    '상속세 및 증여세법 제53조, 소득세법 제97조의2',
-    '지방세법·시행령 (취득세·재산세 2026년 현행)'
+    '상속세 및 증여세법 제53조, 소득세법 제97조의2 · 제88조 10호',
+    '지방세법 §10의2 ⑥ (부담부증여 과세표준) · §13의3 (주택수 산입) · §110 ③·시행령 §109의2 (과표상한 5%)',
+    '지방세법·시행령 (취득세·재산세 2026년 현행)',
+    '종합부동산세법 §8 ④ (1세대1주택 판정에서 상속·지방저가·일시적 2주택 제외)'
   ]
 };
 
@@ -703,18 +716,30 @@ const PROP = {
   urban: 0.0014,
   edu: 0.20
 };
-function fairRateOne(pub) {
+// P0-3A' (지방세법 시행령 §109 ①-2): 43·44·45% 특례 공정시장가액비율은 매년 한시 개정.
+// 2026년까지만 확정, 2027년 이후 시행령 미개정 시 60% 복귀 → 시뮬레이터는 미연장 가정을 기본으로 함.
+function fairRateOne(pub, year) {
+  if (year && year >= 2027) return PROP.fairOther;  // 60%
   for (const [cap, r] of PROP.fairOne) if (pub <= cap) return r;
   return 0.45;
 }
-function propertyTax(pub, isOneHH, urban = true) {
-  const fair = isOneHH ? fairRateOne(pub) : PROP.fairOther;
-  const base = pub * fair;
+// P0-3B (지방세법 §110 ③ + 시행령 §109의2, 2024 시행): 주택 재산세 과세표준상한제
+// 과세표준상한액 = 직전연도 과세표준 + (당해연도 과세표준 − 직전연도) × 5%
+function propertyTax(pub, isOneHH, urban = true, prevBase = null, year = null) {
+  const fair = isOneHH ? fairRateOne(pub, year) : PROP.fairOther;
+  let base = pub * fair;
+  const rawBase = base;
+  let capped = false;
+  if (prevBase != null && prevBase > 0 && base > prevBase) {
+    const capBase = prevBase + (base - prevBase) * 0.05;
+    if (capBase < base) { base = capBase; capped = true; }
+  }
+  // 특례세율(공시 9억 이하 1세대1주택)은 지방세법 §111의2에 일몰 없이 상시 규정 → 연도 무관
   const useSpec = isOneHH && pub <= PROP.specCap;
   const main = progressive(base, useSpec ? PROP.rateSpec : PROP.rateStd);
   const city = urban ? base * PROP.urban : 0;
   const edu = main * PROP.edu;
-  return { pub, fair, base, useSpec, main, city, edu, total: main + city + edu };
+  return { pub, fair, base, rawBase, capped, useSpec, main, city, edu, total: main + city + edu };
 }
 
 /* =====================================================================
@@ -755,7 +780,10 @@ function jongParams(year, scen) {
     key: 'r2028', label: '정부안 2028~',
     dedOne: live => live ? 14 * 억 : 9 * 억,
     dedMulti: ls => 4 * 억 + 5 * 억 * ls,
-    fair: (n, hasAdj) => (n >= 3 || (n >= 2 && hasAdj)) ? 0.80 : 0.70,
+    // 정부안 문답자료 p.45: 3주택 이상 또는 조정지역 주택 보유자(단, 1세대1주택자 제외) → 80%,
+    // 그 외 (1세대1주택자, 지방 1·2주택) → 70%.
+    // 부부공동명의 개별납부는 각자 인별 판정 시 1세대1주택자가 아니므로 조정지역 시 80% 적용.
+    fair: (n, hasAdj, isOne) => isOne ? 0.70 : ((n >= 3 || hasAdj) ? 0.80 : 0.70),
     table: () => JR_2028,
     creditMode: 'live', burdenCap: 2.00
   };
@@ -790,7 +818,7 @@ function jongbuPerson(o) {
   d.deduct = ded; d.threshold = ded;
   if (o.pubSum <= ded) return d;
 
-  const fair = P.fair(o.houseCount, !!o.hasAdj);
+  const fair = P.fair(o.houseCount, !!o.hasAdj, !!o.isOne);
   d.fair = fair;
   const base = (o.pubSum - ded) * fair;
   d.base = base;
@@ -809,7 +837,19 @@ function jongbuPerson(o) {
     else pr = Math.max(stepRate(o.holdY || 0, HOLD_CREDIT_HALF), stepRate(o.liveY || 0, PERIOD_CREDIT));
     const rate = Math.min(0.80, ageR + pr);
     d.creditRate = rate;
-    d.credit = tax * rate;
+    let credit = tax * rate;
+    // P0-1 (2026.8.3 정부안 개정안): 종부세 세액공제 절대금액 한도 신설
+    //   2027년: 800만원, 2028년 이후: 600만원 (합산 세액공제액 상한)
+    //   ※ 국회 심의 전 정부안, reform 시나리오에만 적용
+    if (o.scen === 'reform' && o.year >= 2027) {
+      const cap = o.year === 2027 ? 800 * 만 : 600 * 만;
+      if (credit > cap) {
+        d.creditCap = cap;
+        d.creditRaw = credit;
+        credit = cap;
+      }
+    }
+    d.credit = credit;
     tax -= d.credit;
   }
   d.beforeCap = tax;
@@ -833,11 +873,25 @@ function jongbuPerson(o) {
 function activeHouses(inp, opt = {}) {
   return inp.houses.filter(h => h.id !== opt.excludeId);
 }
+// P0-5 (소득세법 §88 10호·지방세법 §13의3): 분양권/입주권도 양도·취득 주택수 산입
+// P0-6 (종부세법 §8④): 1세대1주택 특례 판정 시 상속·지방저가·인구감소는 주택수에서 제외
+//                       (등록임대는 요건 복잡 → 자동화 대신 옵션+경고로 유지)
 // 일시적 2주택: 2주택 + temp2 플래그 → 1주택 지위 유지(처분기한 내 가정)
-function oneStatusOf(houses) {
-  if (houses.length === 1) return { one: true, temp2: false };
-  if (houses.length === 2 && houses.some(h => h.flags && h.flags.temp2)) return { one: true, temp2: true };
-  return { one: false, temp2: false };
+function specialExcludedCount(houses) {
+  return houses.filter(h => h.flags && (h.flags.inherit || h.flags.lowLocal || h.flags.popDecline)).length;
+}
+function oneStatusOf(houses, rightsCount = 0) {
+  const excl = specialExcludedCount(houses);       // 특례 제외 대상 실주택 수
+  const netHouses = houses.length - excl;           // 실질 주택수
+  const netTotal = netHouses + rightsCount;         // 실질 + 권리
+  if (netTotal === 1 && netHouses === 1) return { one: true, temp2: false, effCount: houses.length + rightsCount, excluded: excl };
+  if (netTotal === 2 && netHouses === 2 && houses.some(h => h.flags && h.flags.temp2))
+    return { one: true, temp2: true, effCount: houses.length + rightsCount, excluded: excl };
+  return { one: false, temp2: false, effCount: houses.length + rightsCount, excluded: excl };
+}
+function rightsCountOf(inp) {
+  const r = inp && inp.rights ? inp.rights : {};
+  return (r.presale ? 1 : 0) + (r.occupancy ? 1 : 0);
 }
 function mainHouseOf(houses) { // 거주 중인 주택 우선, 없으면 첫 번째
   return houses.find(h => liveNowOf(h.livePeriods)) || houses[0];
@@ -856,7 +910,12 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
 
   const rows = houses.map(h => {
     const pub = pubAt(h, year, inp);
-    return { h, pub, pt: propertyTax(pub, isOnePT, urban) };
+    // P0-3B: house.id별 직전연도 과세표준 체이닝 (prevMap에 저장)
+    const pbKey = `pb|${scen}|${h.id}`;
+    const prevBase = prevMap ? prevMap[pbKey] : null;
+    const pt = propertyTax(pub, isOnePT, urban, prevBase, year);
+    if (prevMap) prevMap[pbKey] = pt.base;
+    return { h, pub, pt };
   });
   const prop = {
     rows,
@@ -1082,10 +1141,20 @@ function yangdoCore(o) {
   d.surcharge = surRate;
   if (heavy) d.notes.push(`조정대상지역 다주택 중과 +${Math.round(surRate * 100)}%p (${P.label})`);
 
+  // P0-2 (2026.8.3 정부안 개정안): 장기보유특별공제 절대금액 한도
+  //   2028년 양도분 20억원, 2029년 이후 양도분 10억원 (2027년까지는 현행 유지)
+  //   ※ 인별 연간 + 양도물건별 한도. 공동소유 시 지분비율로 안분.
+  //   ※ 국회 심의 전 정부안, reform 시나리오에만 적용
+  const ltcgCap = (o.scen === 'reform')
+    ? (o.year >= 2029 ? 10 * 억 : (o.year === 2028 ? 20 * 억 : Infinity))
+    : Infinity;
   for (const ow of o.owners) {
     const g = gain * ow.share;
     const taxable = g * ratio;
-    const ltcg = taxable * rate;
+    let ltcg = taxable * rate;
+    const ltcgCapOw = ltcgCap === Infinity ? Infinity : ltcgCap * ow.share;
+    let ltcgCapped = false;
+    if (ltcg > ltcgCapOw) { ltcg = ltcgCapOw; ltcgCapped = true; }
     let bd = o.sameYearOther ? 0 : P.basicDed;
     if (!o.sameYearOther && P.bigDed && o.isOne && (o.liveY || 0) >= 10 && full <= 30 * 억) {
       bd = P.bigDed;
@@ -1107,7 +1176,10 @@ function yangdoCore(o) {
       senior = Math.min(gross * P.senior.rate, P.senior.cap);
     }
     const tax = Math.max(0, gross - senior);
-    d.owners.push({ key: ow.key, share: ow.share, taxable, ltcg, basicDed: base > 0 ? bd : Math.min(bd, taxable - ltcg), base, rate: mRate, gross, senior, tax, local: tax * 0.10, total: tax * 1.10 });
+    d.owners.push({ key: ow.key, share: ow.share, taxable, ltcg, ltcgCapped, ltcgCap: ltcgCap === Infinity ? null : ltcgCapOw, basicDed: base > 0 ? bd : Math.min(bd, taxable - ltcg), base, rate: mRate, gross, senior, tax, local: tax * 0.10, total: tax * 1.10 });
+    if (ltcgCapped && !d.notes.some(n => n.includes('장특공제 한도'))) {
+      d.notes.push(`정부안 장특공제 한도 적용 (${P.label}) — ${o.year >= 2029 ? '10억원' : '20억원'} 안분 후 초과분 배제`);
+    }
     d.tax += tax;
   }
   if ((o.holdY || 0) < 1) d.notes.push('보유 1년 미만 — 단기세율 70%');
@@ -1141,7 +1213,8 @@ function sellSim(inp, scen) {
     })()) : holdRows[i].holdTax;
 
     const others = activeHouses(inp);
-    const stat = oneStatusOf(others);
+    const rc = rightsCountOf(inp);   // P0-5: 매도 시점의 잔여 주택 수 + 권리
+    const stat = oneStatusOf(others, rc);
     const needLive = adjYes(h.adjAcq) && (!h.acqDate || h.acqDate >= '2017-08');
     const heavyAdj = adjYes(h.adjSale);
     const owners = [];
@@ -1161,7 +1234,7 @@ function sellSim(inp, scen) {
       sale: salePrice, acq: (h.acqPrice || 0) * 억, cost: (s.cost || 0) * 만,
       holdY, liveY,
       isOne: stat.one, needLive,
-      heavyCount: (!stat.one && heavyAdj) ? Math.min(3, others.length) : 0,
+      heavyCount: (!stat.one && heavyAdj) ? Math.min(3, others.length + rc) : 0,
       fullPrice: salePrice,
       owners,
       sameYearOther: !!s.sameYearOther,
@@ -1257,10 +1330,13 @@ function giftFull(inp) {
   const gt = giftTaxCalc({ value, debt, relation, prior10y: (g.prior || 0) * 억 });
 
   const houses = activeHouses(inp);
-  const stat = oneStatusOf(houses);
+  const rc = rightsCountOf(inp);
+  const stat = oneStatusOf(houses, rc);
   const toLineal = relation !== 'other';
+  // P0-4 (지방세법 §10의2 ⑥): 부담부증여 무상분 base = 시가인정액 − 채무부담액
+  const freeBase = Math.max(0, value - debt);
   const at = giftAcquisitionTax({
-    base: value, officialFull: pubOf(h), adj: adjYes(h.adjNow),
+    base: freeBase, officialFull: pubOf(h), adj: adjYes(h.adjNow),
     big85: !!h.area85, giverIsOne: stat.one, toLineal
   });
   // 부담부 유상부분 취득세(수증자) — 표준세율 가정
@@ -1283,7 +1359,7 @@ function giftFull(inp) {
       sale: debt, acq: acqPortion, cost: 0,
       holdY, liveY,
       isOne: stat.one, needLive,
-      heavyCount: (!stat.one && adjYes(h.adjNow)) ? Math.min(3, houses.length) : 0,
+      heavyCount: (!stat.one && adjYes(h.adjNow)) ? Math.min(3, houses.length + rc) : 0,
       fullPrice: fullValue,
       owners: [{ key: 'giver', share: 1, age: ((inp.people || {}).me || {}).age || 0 }],
       sameYearOther: false, seniorMove: false
@@ -1617,8 +1693,9 @@ const CONFIG = {
   GA4_ID: ''               // GA4 측정 ID 입력 시에만 이벤트 전송 (이벤트명·유입경로만, 입력값은 전송하지 않음)
 };
 const VERSION = {
-  current: 'v2.1', updated: '2026-08-11',
+  current: 'v2.2', updated: '2026-08-11',
   log: [
+    ['v2.2', '2026-08-11', '계산 엔진 동기화(r3) — 부담부증여 취득세 과표, 분양권·입주권 주택수 산입, 특례주택 판정, 재산세 과표상한(5%), 공동명의 개별납부 조정지역 80% 등 반영'],
     ['v2.1', '2026-08-11', '블로그 질문 허브 연결 — 계산 근거 직후·페이지 끝 질문 CTA 활성화'],
     ['v2.0', '2026-08-10', '공개형 전환 — 비밀번호 제거, 핵심 결과/닥터마빈 결과 해석 2단 구조, 질문 CTA·업데이트 내역 신설'],
     ['v1.0', '2026-08-09', '최초 공개 — 6단계 진단, 재산세·종부세·양도세·취득세·증여세, 공동명의 비교, 정부 공식사례 회귀 검증']
@@ -2188,7 +2265,9 @@ function renderReport() {
   ctx.gift = inp.purposes.includes('gift') ? giftFull(inp) : null;
   ctx.joint = inp.purposes.includes('joint') ? jointConvertAnalysis(inp) : null;
   ctx.acq = inp.purposes.includes('acquire') ? acquisitionTax({
-    price: inp.acquire.price * 억, housesAfter: inp.acquire.housesAfter, adj: !!inp.acquire.adj,
+    // P0-5 (지방세법 §13의3): 취득세 중과 판정 시 세대별 주택수에 분양권·입주권 포함
+    price: inp.acquire.price * 억, housesAfter: inp.acquire.housesAfter + rightsCountOf(inp),
+    adj: !!inp.acquire.adj,
     big85: !!inp.acquire.big85, temp2: !!inp.acquire.temp2, firstHome: !!inp.acquire.first
   }) : null;
 
