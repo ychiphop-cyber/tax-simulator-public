@@ -274,6 +274,9 @@ function jongbuPerson(o) {
     else pr = Math.max(stepRate(o.holdY || 0, HOLD_CREDIT_HALF), stepRate(o.liveY || 0, PERIOD_CREDIT));
     const rate = Math.min(0.80, ageR + pr);
     d.creditRate = rate;
+    d.creditAgeRate = ageR;      // 표시용 분해 (P2-4)
+    d.creditPeriodRate = pr;
+    d.creditPeriodLabel = P.creditMode === 'hold' ? '보유' : P.creditMode === 'live' ? '거주' : '보유·거주 중 큰 값';
     let credit = tax * rate;
     // P0-1 (2026.8.3 정부안 개정안): 종부세 세액공제 절대금액 한도 신설
     //   2027년: 800만원, 2028년 이후: 600만원 (합산 세액공제액 상한)

@@ -691,7 +691,7 @@ function heroHTML(c) {
 function driverText(c) {
   const inp = c.inp;
   const houses = inp.houses;
-  const stat = oneStatusOf(houses);
+  const stat = oneStatusOf(houses, 0, `${inp.assumptions.baseYear}-06`); // 기준연도 과세기준일 기준 판정
   const mainH = houses.find(h => liveNowOf(h.livePeriods)) || houses[0];
   const live = mainH && liveNowOf(mainH.livePeriods);
   const items = [];
@@ -803,7 +803,7 @@ function sensHTML(c) {
 function opinionHTML(c) {
   const inp = c.inp;
   const houses = inp.houses;
-  const stat = oneStatusOf(houses);
+  const stat = oneStatusOf(houses, 0, `${inp.assumptions.baseYear}-06`); // 기준연도 과세기준일 기준 판정
   const mainH = houses.find(h => liveNowOf(h.livePeriods)) || houses[0];
   const live = mainH && liveNowOf(mainH.livePeriods);
   const pubNow = houses.reduce((s, h) => s + pubOf(h), 0);
@@ -812,22 +812,39 @@ function opinionHTML(c) {
 
   // 1 사실
   const estMark = houses.some(pubEstimated) ? ' (일부 추정)' : '';
-  const facts = `세대 기준 <b>${houses.length}주택</b>${stat.temp2 ? ' (일시적 2주택 표시)' : ''}, ` +
+  const facts = `세대 기준 <b>${houses.length}주택</b>${stat.excluded > 0 ? ` (특례 제외 후 실질 ${houses.length - stat.excluded}주택)` : ''}${stat.temp2 ? ' (일시적 2주택 표시)' : ''}, ` +
     `명의 ${anyJoint ? '부부 공동 포함' : '단독'}, 공시가격 합계 <b>${eok(pubNow)}</b>${estMark}, ` +
     `${live ? `본인 세대가 ${esc(mainH.name || '주요 주택')}에 거주 중` : '보유 주택에 거주하지 않음'}, ` +
     `본인 ${inp.people.me.age}세` +
     `${mainH && mainH.acqDate ? `, 주요 주택 취득 ${mainH.acqDate} (보유 ${Math.floor(r26.holdY)}년차, 거주 ${Math.floor(r26.liveY)}년)` : ''}.`;
 
-  // 2 적용 규칙
+  // 2 적용 규칙 — 실제 계산에 적용된 분기만 노출 (P2-1)
   const rules = [];
-  if (stat.one && !anyJoint) rules.push(`1세대 1주택 단독명의 — 종부세 기본공제 현행 12억원, 정부안 ${live ? '실거주 14억원' : '비거주 9억원'} 적용.`);
-  if (stat.one && anyJoint) rules.push('1세대 1주택 부부 공동명의 — 각자 지분별 개별납부와 1세대 1주택 특례(전체 합산 + 고령·장기 세액공제)를 모두 계산해 유리한 쪽을 표시.');
-  if (!stat.one) rules.push(`다주택(${houses.length}주택) — 종부세는 사람별 합산 과세. 정부안 기본공제는 4억 + 5억 × 거주주택 비중으로 계산.`);
+  const exclNote = stat.excluded > 0 ? ` (특례주택 ${stat.excluded}채는 주택 수 판정에서 제외)` : '';
+  if (stat.one && !anyJoint) rules.push(`1세대 1주택 판정${exclNote} — 종부세 기본공제 현행 12억원, 정부안 ${live ? '실거주 14억원' : '비거주 9억원'} 적용.`);
+  if (stat.one && anyJoint) rules.push(`1세대 1주택 부부 공동명의${exclNote} — 각자 지분별 개별납부와 1세대 1주택 특례(전체 합산 + 고령·장기 세액공제)를 모두 계산해 유리한 쪽을 표시.`);
+  if (!stat.one) rules.push(`다주택(실질 ${houses.length - stat.excluded}주택) — 종부세는 사람별 합산 과세. 정부안 기본공제는 4억 + 5억 × 거주주택 비중으로 계산.`);
   if (stat.temp2) rules.push('일시적 2주택 표시 — 처분기한 내 요건 충족을 전제로 1주택 지위를 유지한 계산입니다. 기한 경과 시 결과가 달라집니다.');
-  const hasAdjAny = houses.some(h => adjYes(h.adjNow));
-  if (houses.length >= 3 || (houses.length >= 2 && hasAdjAny)) rules.push('3주택 이상 또는 조정대상지역 2주택 — 2028년부터 공정시장가액비율 80% 적용 대상.');
+  if (c.inheritExp) rules.push(`상속주택 특례는 ${c.inheritExp.year}년부터 만료되어 그해부터 다주택 규칙(기본공제·공정시장가액비율)이 적용됩니다.`);
+  // 2028 공정시장가액비율 — 실제 적용값에서 도출
+  {
+    const r28j = c.ref[2] && c.ref[2].jong;
+    const applied = r28j ? (r28j.mode === 'joint-compare'
+      ? r28j.joint.indiv.map(x => x.r).concat([r28j.joint.special])
+      : r28j.persons) : [];
+    const fairs = applied.filter(p => p.base > 0).map(p => p.fair);
+    const has80 = fairs.some(f => Math.abs(f - 0.80) < 1e-9);
+    const hasAdjAny = houses.some(h => adjYes(h.adjNow));
+    if (has80) {
+      rules.push(r28j.mode === 'joint-compare'
+        ? '공정시장가액비율(2028~) — 부부 개별납부는 인별 판정상 1세대 1주택자가 아니므로 조정대상지역 보유 시 80%, 특례 신청 시 70%가 적용됩니다.'
+        : '조정대상지역 다주택 — 2028년부터 공정시장가액비율 80%가 적용되었습니다.');
+    } else if (fairs.length && hasAdjAny && stat.one) {
+      rules.push('조정대상지역 주택이지만 1세대 1주택 판정으로 2028년 이후 공정시장가액비율은 70%가 적용되었습니다 (80% 대상 아님).');
+    }
+  }
   if (houses.some(h => h.adjNow === 'unknown' || h.adjAcq === 'unknown' || h.adjSale === 'unknown')) rules.push('규제지역 여부가 미확인인 항목은 보수적으로(규제지역으로) 가정했습니다.');
-  rules.push('재산세는 물건별(2026년 현행 지방세), 종부세는 납세자별, 양도세는 양도자별, 증여세는 수증자별로 계산 단위를 분리했습니다.');
+  rules.push('재산세는 물건별(현행 지방세), 종부세는 납세자별, 양도세는 양도자별, 증여세는 수증자별로 계산 단위를 분리했습니다.');
 
   // 3 계산 결론
   const calcLine = `현행 기준 ${c.years[0]}년 보유세는 <b>${won(r26.holdTax)}</b>(재산세 ${won(r26.prop.total)} + 종부세 ${won(r26.jong.total)}), ` +
@@ -877,6 +894,14 @@ function opinionHTML(c) {
   </div>`;
 }
 
+
+/* P2-3: 증여 취득세 라벨 — 실제 합산된 세목·세율을 그대로 표기 */
+function giftAcqLabel(at) {
+  const parts = at.heavy ? ['12% 중과', '교육세 0.4%'] : ['3.5%', '교육세 0.3%'];
+  if (at.rural > 0) parts.push(at.heavy ? '농특세 1.0%' : '농특세 0.2%');
+  return parts.join(' + ');
+}
+
 /* 6) 공동명의 */
 function jointHTML(c) {
   const jc26 = c.cur.map(r => r.jong).filter(j => j.mode === 'joint-compare');
@@ -907,7 +932,7 @@ function jointHTML(c) {
     convert = `<h3 class="mini-h">단독명의 → 부부 공동명의(${Math.round(j.share * 100)}%) 전환 분석</h3>
     <div class="kv"><span>이전 지분 평가액 (시가 기준)</span><span>${won(j.value)}</span></div>
     <div class="kv"><span>증여세 (배우자 공제 6억 반영)</span><span>${won(j.gt.tax)}</span></div>
-    <div class="kv"><span>증여 취득세${j.at.heavy ? ' <span class="stat chk">12% 중과</span>' : ' (3.5%)'}</span><span>${won(j.at.total)}</span></div>
+    <div class="kv"><span>증여 취득세 (${giftAcqLabel(j.at)})${j.at.heavy ? ' <span class="stat chk">중과</span>' : ''}</span><span>${won(j.at.total)}</span></div>
     <div class="kv total"><span>전환 비용 합계</span><span>${won(j.cost)}</span></div>
     <div class="tblwrap"><table>
       <thead><tr><th>연도</th><th>전환 전 종부세</th><th>전환 후 종부세</th><th>연간 절감</th></tr></thead>
@@ -986,7 +1011,7 @@ function giftHTML(c) {
     ${g.gt.prior > 0 ? `<div class="kv"><span>10년 내 기존 증여 합산</span><span>+${won(g.gt.prior)}</span></div>` : ''}
     <div class="kv"><span>= 과세표준</span><span>${won(g.gt.baseNow)}</span></div>
     <div class="kv"><span>산출세액 − 신고세액공제 3%</span><span>${won(g.gt.tax)}</span></div>
-    <div class="kv"><span>증여 취득세${g.at.heavy ? ' <span class="stat chk">12% 중과</span>' : ' (3.5% + 부가세)'}</span><span>${won(g.at.total)}</span></div>
+    <div class="kv"><span>증여 취득세 (${giftAcqLabel(g.at)})${g.at.heavy ? ' <span class="stat chk">중과</span>' : ''}</span><span>${won(g.at.total)}</span></div>
     ${g.atOnerous ? `<div class="kv"><span>유상(채무)분 취득세</span><span>${won(g.atOnerous.total)}</span></div>` : ''}
     ${g.giverYangdo ? `<div class="kv"><span>증여자 양도세 (채무 인수분)</span><span>${won(g.giverYangdo.total)}</span></div>` : ''}
     <div class="kv total"><span>총 이전비용</span><span>${won(g.total)}</span></div>
@@ -1036,7 +1061,12 @@ function jongDetailRows(j, title) {
   h += kvRow('= 과세표준', won(j.base));
   h += kvRow('산출세액', won(j.gross));
   h += kvRow('− 공제할 재산세액', '−' + won(j.propCredit));
-  if (j.creditRate > 0) h += kvRow(`− 세액공제 (연령+기간 ${Math.round(j.creditRate * 100)}%)`, '−' + won(j.credit));
+  if (j.creditRate > 0) {
+    const aR = Math.round((j.creditAgeRate || 0) * 100), pR = Math.round((j.creditPeriodRate || 0) * 100);
+    const capR = Math.round(j.creditRate * 100);
+    const comp = `연령 ${aR}% + ${j.creditPeriodLabel || '기간'} ${pR}%${aR + pR > capR ? ` → 상한 ${capR}%` : ` = ${capR}%`}`;
+    h += kvRow(`− 세액공제 (${comp}${j.creditCap ? `, 한도 ${won(j.creditCap)} 적용` : ''})`, '−' + won(j.credit));
+  }
   if (j.capped > 0) h += kvRow('세부담상한 초과 차감', '−' + won(j.capped));
   h += kvRow('종합부동산세', won(j.tax));
   h += kvRow('+ 농어촌특별세 20%', won(j.rural));
