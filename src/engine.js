@@ -968,13 +968,28 @@ function validateInput(inp) {
     if (h.adjNow === 'unknown') confirms.push({ code: 'ADJ_NOW', msg: `${nm} — 현재 규제지역 여부 미확인. 보수적으로 규제지역으로 가정했습니다.` });
     if (!h.acqDate) confirms.push({ code: 'ACQ_DATE', msg: `${nm} — 취득일 미입력. 보유기간 공제·단기세율 판정이 부정확할 수 있습니다.` });
     if (h.flags) {
-      const fl = [];
-      if (h.flags.temp2) fl.push('일시적 2주택');
-      if (h.flags.inherit) fl.push('상속주택');
-      if (h.flags.lowLocal) fl.push('지방 저가주택');
-      if (h.flags.rental) fl.push('등록임대');
-      if (h.flags.popDecline) fl.push('인구감소지역');
-      if (fl.length) confirms.push({ code: 'SPECIAL', msg: `${nm} — ${fl.join('·')} 특례 표시. 요건 충족 여부에 따라 결과가 달라질 수 있어 전문가 확인이 필요합니다.` });
+      // 방향 명시 원칙(수정 지시서 P0-1): 실제 계산이 사용자에게 유리한 방향인지
+      // 불리한 방향인지를 문구에 그대로 적는다. '보수적'은 실제 보수적일 때만 쓴다.
+      if (h.flags.inherit) confirms.push({
+        code: 'SPECIAL',
+        msg: `${nm} — 상속주택을 종부세 1세대 1주택 판정에서 주택 수에 넣지 않고 계산했습니다(종합부동산세법 §8④, 사용자에게 유리한 방향). 요건을 충족하지 못하거나 특례 기간(상속개시일부터 5년)이 끝나면 다주택으로 판정되어 세액이 크게 오릅니다.`
+      });
+      if (h.flags.lowLocal) confirms.push({
+        code: 'SPECIAL',
+        msg: `${nm} — 지방 저가주택을 1세대 1주택 판정에서 주택 수에 넣지 않고 계산했습니다(유리한 방향). 공시가격·소재지 요건을 충족하지 못하면 다주택으로 판정됩니다.`
+      });
+      if (h.flags.popDecline) confirms.push({
+        code: 'SPECIAL',
+        msg: `${nm} — 인구감소지역 주택을 1세대 1주택 판정에서 주택 수에 넣지 않고 계산했습니다(유리한 방향). 요건 미충족 시 다주택으로 판정됩니다.`
+      });
+      if (h.flags.temp2) confirms.push({
+        code: 'SPECIAL',
+        msg: `${nm} — 일시적 2주택으로 보아 1주택 지위를 유지한 채 계산했습니다(처분기한 내 충족 가정, 유리한 방향). 기한 내 종전주택을 처분하지 못하면 다주택으로 과세됩니다.`
+      });
+      if (h.flags.rental) confirms.push({
+        code: 'SPECIAL',
+        msg: `${nm} — 등록임대 특례는 요건이 복잡해 자동 반영하지 않았습니다(합산 과세, 사용자에게 불리한 쪽으로 계산). 요건 충족 시 실제 세액은 이보다 낮을 수 있습니다.`
+      });
     }
   });
 
@@ -984,7 +999,15 @@ function validateInput(inp) {
 
   if (inp.situation === 'unsure') confirms.push({ code: 'UNSURE', msg: '주택 수 판정이 불확실하다고 답하셨습니다 — 잠정 분류로 계산하며, 특례·권리관계에 따라 달라질 수 있습니다.' });
   if (inp.rights && (inp.rights.presale || inp.rights.occupancy)) confirms.push({ code: 'RIGHTS', msg: '분양권·입주권은 양도세·취득세 주택 수에 포함되지만 이 계산의 종부세에는 반영하지 않았습니다.' });
-  if (inp.rights && inp.rights.inherited) confirms.push({ code: 'INHERIT', msg: '상속주택은 요건에 따라 주택 수 판정에서 제외될 수 있습니다 — 보수적으로 포함해 계산했습니다.' });
+  if (inp.rights && inp.rights.inherited) {
+    const flagged = houses.some(h => h.flags && h.flags.inherit);
+    confirms.push({
+      code: 'INHERIT',
+      msg: flagged
+        ? '상속주택 특례 적용 여부는 위 주택별 안내를 확인하세요. 특례는 상속개시일부터 5년(소액지분·저가주택은 무기한)입니다.'
+        : '상속주택 표시가 있으나 특례 플래그가 켜진 주택이 없어 주택 수에 포함해 계산했습니다(불리한 방향). 상속 후 5년 이내라면 STEP 2에서 해당 주택에 상속주택 특례를 표시하세요.'
+    });
+  }
 
   const purposes = inp.purposes || [];
   if (purposes.includes('sell')) {
@@ -1037,12 +1060,17 @@ function conclusionOf(inp, curRows, refRows, valid, sens) {
 
   if (valid.blocked) return { code: 'BLOCKED', head: '필수 입력을 확인해 주세요', sub: '' };
 
-  const criticalUnknown = valid.confirms.some(c => ['UNSURE', 'SPECIAL'].includes(c.code));
-  if (criticalUnknown) {
+  const hasUnsure = valid.confirms.some(c => c.code === 'UNSURE');
+  const hasSpecial = valid.confirms.some(c => c.code === 'SPECIAL');
+  if (hasUnsure || hasSpecial) {
+    // 방향 명시(수정 지시서 P0-1): 특례 표시는 요건 충족을 전제로 유리한 방향으로 반영되어 있다.
+    const sub = hasSpecial
+      ? '특례 표시 항목은 요건 충족을 전제로 세액이 낮아지는 방향으로 반영했습니다. 요건을 충족하지 못하면 실제 세액은 이보다 커질 수 있습니다. 항목별 방향은 아래 상태 점검을 확인하세요.'
+      : '주택 수 판정이 불확실해 잠정 분류로 계산했습니다. 미확인 규제지역은 규제지역으로(보수적), 특례는 표시된 경우에만 반영했습니다.';
     return {
       code: 'UNCERTAIN',
       head: '주택 수·특례 확인 전에는 세액 범위를 확정하기 어렵습니다',
-      sub: '아래 결과는 보수적 가정(특례 미적용·규제지역 포함) 기준의 잠정치입니다.', diff
+      sub, diff
     };
   }
   if (curJong <= 0 && refJong <= 0) {
