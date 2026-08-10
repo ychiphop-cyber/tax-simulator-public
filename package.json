@@ -1,0 +1,9 @@
+{
+  "name": "tax-simulator-public",
+  "version": "2.4.0",
+  "private": true,
+  "scripts": {
+    "test": "node test/units.js && node test/goldens.js && node test/display.js",
+    "build": "bash build.sh"
+  }
+}

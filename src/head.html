@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>닥터마빈의 부동산 세금 시뮬레이터 — 8·3 세제개편 무료 계산 · 결과 심층 분석</title>
+<meta name="description" content="8·3 부동산 세제개편을 무료로 계산해 보세요. 재산세·종부세·양도세·취득세·증여세, 부부 공동명의 비교, 결과 심층 분석까지.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme: light;
+  --surface:#ffffff; --page:#faf9f7; --raised:#f4f2ee;
+  --ink:#12100f; --ink2:#56534e; --muted:#8a867e;
+  --grid:#eae7e0; --axis:#d6d2c9; --line:rgba(18,16,15,.10);
+  --s1:#A8252C; --s2:#3d7ab8; --s3:#c98500; --s4:#4a3aa7;
+  --up:#A8252C; --down:#006300; --ok:#006300; --warn2:#c98500;
+  --accent:#A8252C; --accent-soft:#fbf1f1;
+  --ok-soft:#eef6ee; --warn-soft:#fdf6e9; --info-soft:#eff4fa;
+  --r:14px;
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --surface:#161615; --page:#0d0d0d; --raised:#1e1e1c;
+  --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --line:rgba(255,255,255,.10);
+  --s1:#e66767; --s2:#5b9be0; --s3:#d99a2b; --s4:#9085e9;
+  --up:#e66767; --down:#3fb950; --ok:#3fb950; --warn2:#d99a2b;
+  --accent:#e66767; --accent-soft:#2a1c1c;
+  --ok-soft:#16211a; --warn-soft:#25200f; --info-soft:#141d27;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--page); color:var(--ink);
+  font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',system-ui,-apple-system,sans-serif;
+  font-size:15px; line-height:1.65; -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:760px;margin:0 auto;padding:0 16px 120px}
+button{font-family:inherit}
+
+/* ── 헤더 ── */
+header{padding:22px 0 6px}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;
+  color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent);
+  border-radius:99px;padding:3px 10px;letter-spacing:-.01em}
+.badge.gray{color:var(--ink2);background:var(--raised);border-color:var(--line)}
+h1{font-size:23px;line-height:1.35;margin:10px 0 4px;letter-spacing:-.02em;font-weight:700}
+.sub{color:var(--ink2);font-size:13px;margin:0}
+#themeBtn{background:none;border:1px solid var(--line);color:var(--ink2);border-radius:99px;
+  padding:5px 12px;font-size:12px;cursor:pointer;white-space:nowrap;margin-top:2px}
+
+/* ── 스테퍼 ── */
+.stepper{display:flex;gap:2px;margin:18px 0 6px;position:sticky;top:0;z-index:20;
+  background:var(--page);padding:10px 0 8px}
+.stepper .st{flex:1;text-align:center;font-size:10.5px;color:var(--muted);cursor:default;
+  border:0;background:none;padding:0;line-height:1.3}
+.stepper .st i{display:block;height:4px;border-radius:2px;background:var(--grid);margin-bottom:5px}
+.stepper .st.done i{background:var(--accent);opacity:.35}
+.stepper .st.cur{color:var(--accent);font-weight:700}
+.stepper .st.cur i{background:var(--accent);opacity:1}
+.stepper .st.done{color:var(--ink2);cursor:pointer}
+
+/* ── 카드 공통 ── */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  padding:18px 16px;margin:14px 0}
+.card > h2{font-size:16px;margin:0 0 4px;letter-spacing:-.01em;font-weight:700}
+.card > .hint{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.55}
+.card h3.mini-h{font-size:12.5px;color:var(--muted);font-weight:700;margin:16px 0 8px;letter-spacing:-.01em}
+.stepnum{font-size:11.5px;color:var(--accent);font-weight:700;letter-spacing:.02em}
+
+/* ── 선택 카드(Step1·4) ── */
+.opts{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px}
+.opt{display:block;text-align:left;background:var(--surface);border:1.5px solid var(--line);
+  border-radius:12px;padding:13px 14px;cursor:pointer;color:var(--ink)}
+.opt b{display:block;font-size:14.5px;letter-spacing:-.01em}
+.opt span{display:block;font-size:12px;color:var(--muted);margin-top:2px;line-height:1.5}
+.opt.sel{border-color:var(--accent);background:var(--accent-soft)}
+.opt.sel b{color:var(--accent)}
+@media(min-width:560px){ .opts{grid-template-columns:1fr 1fr} .opts .full{grid-column:1/-1} }
+
+/* ── 세그먼트 ── */
+.seg{display:flex;gap:4px;background:var(--page);border:1px solid var(--line);
+  border-radius:10px;padding:3px}
+.seg button{flex:1;border:0;background:none;color:var(--ink2);
+  font-size:12.5px;font-weight:500;padding:7px 6px;border-radius:7px;cursor:pointer;letter-spacing:-.01em}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:700}
+.seg.sm button{font-size:11.5px;padding:5px 4px}
+.seg.neutral button[aria-pressed="true"]{background:var(--ink);color:var(--surface)}
+
+/* ── 칩 ── */
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.chip{position:relative}
+.chip input{position:absolute;opacity:0;width:0;height:0}
+.chip span{display:inline-block;border:1px solid var(--line);border-radius:99px;padding:4px 11px;
+  font-size:12px;color:var(--ink2);cursor:pointer;user-select:none}
+.chip input:checked + span{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:700}
+.chip input:focus-visible + span{outline:2px solid var(--accent);outline-offset:1px}
+
+/* ── 폼 ── */
+label.mini{display:block;font-size:12px;color:var(--muted);font-weight:500}
+.inline-num{display:inline-flex;align-items:baseline;gap:5px;margin-top:3px}
+.inline-num input{width:84px;font-size:16px;font-weight:700;font-family:inherit;color:var(--ink);
+  background:none;border:0;border-bottom:2px solid var(--line);padding:2px 0;text-align:right}
+.inline-num input:focus{outline:none;border-bottom-color:var(--accent)}
+.inline-num em{font-style:normal;font-size:12px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px 12px}
+.grid2 .full{grid-column:1/-1}
+select,input[type=number],input[type=month],input[type=text]{font-family:inherit}
+select,input[type=month],input[type=text].box{width:100%;margin-top:4px;background:var(--surface);color:var(--ink);
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px}
+input[type=range]{width:100%;accent-color:var(--accent);margin-top:6px}
+.rangeRow{display:flex;justify-content:space-between;align-items:baseline}
+.rangeRow output{font-size:14px;font-weight:700}
+.subtle{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.5}
+
+/* ── 주택 카드 ── */
+.hcard{border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:12px;background:var(--surface)}
+.hcard .hhead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.hno{width:24px;height:24px;flex:0 0 24px;border-radius:7px;background:var(--accent-soft);
+  border:1px solid var(--accent);display:grid;place-items:center;font-size:12px;color:var(--accent);font-weight:700}
+.hname{flex:1;border:0;background:none;font-size:14.5px;font-weight:700;color:var(--ink);padding:2px 0;min-width:0}
+.hname:focus{outline:none;border-bottom:2px solid var(--accent)}
+.iconb{border:1px solid var(--line);background:none;color:var(--ink2);border-radius:8px;
+  padding:4px 9px;font-size:11.5px;cursor:pointer;white-space:nowrap}
+.iconb:hover{border-color:var(--accent);color:var(--accent)}
+.iconb[disabled]{opacity:.3;cursor:default}
+.adjrow{display:grid;grid-template-columns:84px 1fr;gap:8px;align-items:center;margin-top:6px}
+.adjrow .lbl{font-size:12px;color:var(--muted)}
+#addHouse{width:100%;margin-top:12px;border:1px dashed var(--line);background:none;color:var(--ink2);
+  border-radius:10px;padding:11px;font-size:13px;cursor:pointer}
+#addHouse:hover{border-color:var(--accent);color:var(--accent)}
+.period-row{display:flex;gap:6px;align-items:center;margin-top:6px}
+.period-row input[type=month]{flex:1;margin-top:0}
+.period-row .tilde{color:var(--muted);font-size:12px}
+.addrow{border:1px dashed var(--line);background:none;color:var(--ink2);border-radius:8px;
+  padding:6px 10px;font-size:12px;cursor:pointer;margin-top:8px}
+
+/* ── 상태 칩(확인 화면) ── */
+.stat{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:2px 8px;margin-right:6px;white-space:nowrap}
+.stat.ok{color:var(--ok);background:var(--ok-soft);border:1px solid var(--ok)}
+.stat.est{color:var(--warn2);background:var(--warn-soft);border:1px solid var(--warn2)}
+.stat.chk{color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent)}
+.stat.err{color:#fff;background:var(--accent);border:1px solid var(--accent)}
+.stat.info{color:var(--s2);background:var(--info-soft);border:1px solid var(--s2)}
+ul.statlist{margin:8px 0 0;padding:0;list-style:none}
+ul.statlist li{display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink2);line-height:1.55}
+ul.statlist li:last-child{border-bottom:0}
+ul.statlist li .stat{margin-top:1px}
+.sumcard{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:10px;background:var(--surface)}
+.sumcard .shead{display:flex;justify-content:space-between;align-items:center}
+.sumcard .shead b{font-size:13px}
+.sumcard .sbody{font-size:12.5px;color:var(--ink2);margin-top:6px;line-height:1.7}
+.sumcard .sbody b{color:var(--ink)}
+
+/* ── 하단 내비게이션 ── */
+.bottnav{position:fixed;left:0;right:0;bottom:0;z-index:30;
+  background:var(--surface);border-top:1px solid var(--line);
+  padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
+.bottnav .in{max-width:760px;margin:0 auto;display:flex;gap:10px}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);
+  border-radius:11px;padding:13px 18px;font-size:14.5px;font-weight:700;cursor:pointer;letter-spacing:-.01em}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;flex:1}
+.btn.primary[disabled]{opacity:.4;cursor:default}
+.btn.ghost{background:none}
+.navmsg{max-width:760px;margin:0 auto 8px;font-size:12px;color:var(--accent);display:none}
+
+/* ── 결과(보고서) ── */
+.hero{background:var(--surface);border:1.5px solid var(--accent);border-radius:var(--r);padding:20px 16px;margin:14px 0}
+.hero .k{font-size:12px;color:var(--muted)}
+.hero .big{font-size:21px;font-weight:700;letter-spacing:-.02em;line-height:1.45;margin:6px 0 0;color:var(--ink)}
+.hero .sub2{font-size:13px;color:var(--ink2);margin:8px 0 0;line-height:1.6}
+.hero .chiprow{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.tile{background:var(--page);border:1px solid var(--line);border-radius:10px;padding:12px}
+.tile .k{font-size:11.5px;color:var(--muted)}
+.tile-val{font-size:18px;font-weight:700;letter-spacing:-.02em;margin-top:2px}
+.tile-val.up{color:var(--up)} .tile-val.down{color:var(--down)}
+.tile .s{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.45}
+.grade{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:9px;font-weight:700;font-size:15px}
+.grade.A{background:var(--ok-soft);color:var(--ok);border:1.5px solid var(--ok)}
+.grade.B{background:var(--warn-soft);color:var(--warn2);border:1.5px solid var(--warn2)}
+.grade.C{background:var(--accent-soft);color:var(--accent);border:1.5px solid var(--accent)}
+
+/* 검토의견 */
+.op{border-left:3px solid var(--accent);padding:2px 0 2px 14px;margin:14px 0}
+.op .ot{font-size:11.5px;font-weight:700;color:var(--accent);letter-spacing:.02em}
+.op p{font-size:13.5px;color:var(--ink);margin:4px 0 0;line-height:1.75}
+.op p b{color:var(--ink)}
+.op ul{margin:4px 0 0;padding-left:18px;font-size:13px;color:var(--ink2);line-height:1.7}
+
+/* 차트·표 */
+.chart-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px}
+.lgs{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--ink2)}
+.lg{display:inline-flex;align-items:center;gap:6px}
+.lg i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.chart{position:relative;margin-top:6px}
+.chart svg{display:block;overflow:visible}
+.grid{stroke:var(--grid);stroke-width:1}
+.axis{stroke:var(--axis);stroke-width:1}
+text.tick{font-size:11px;fill:var(--muted);font-family:inherit}
+text.tick.hi{fill:var(--accent);font-weight:700}
+text.vlabel{font-size:11px;fill:var(--ink2);font-weight:500;font-family:inherit}
+text.vlabel.hi{fill:var(--accent);font-weight:700}
+rect.mark:hover{opacity:.82}
+.tip{position:absolute;display:none;background:var(--ink);color:var(--surface);font-size:11.5px;
+  line-height:1.45;padding:7px 10px;border-radius:8px;white-space:pre;pointer-events:none;z-index:5;
+  box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.tblwrap{overflow-x:auto;margin-top:12px}
+table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+th,td{padding:8px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500;font-size:11.5px}
+td.strong{font-weight:700}
+tr.hi td{background:var(--accent-soft);color:var(--accent);font-weight:700}
+td.up{color:var(--up)} td.down{color:var(--down)}
+.kv{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+.kv:last-of-type{border-bottom:0}
+.kv span:first-child{color:var(--ink2)}
+.kv span:last-child{font-weight:500;font-variant-numeric:tabular-nums;text-align:right}
+.kv.total{border-top:2px solid var(--ink);border-bottom:0;margin-top:4px;padding-top:12px;font-size:15.5px;font-weight:700}
+.kv.total span:first-child{color:var(--ink);font-weight:700}
+.warnbox{background:var(--accent-soft);border:1px solid var(--accent);border-radius:10px;
+  padding:12px 14px;font-size:12.5px;color:var(--ink2);line-height:1.65;margin-top:14px}
+.warnbox b{color:var(--accent)}
+.notebox{background:var(--raised);border:1px solid var(--line);border-radius:10px;
+  padding:12px 14px;font-size:12.5px;color:var(--ink2);line-height:1.65;margin-top:12px}
+ul.notes{margin:0;padding-left:18px;font-size:13px;color:var(--ink2);line-height:1.75}
+ul.notes li{margin-bottom:9px}
+ul.notes li:last-child{margin-bottom:0}
+ul.notes b{color:var(--ink)}
+details.acc{margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:0 14px}
+details.acc summary{cursor:pointer;font-size:13px;color:var(--ink);font-weight:700;padding:12px 0;list-style:none}
+details.acc summary::-webkit-details-marker{display:none}
+details.acc summary::before{content:'＋ ';color:var(--accent)}
+details.acc[open] summary::before{content:'− '}
+details.acc .detail-body{padding:2px 0 14px}
+.steph{font-size:12px;color:var(--muted);font-weight:700;margin:16px 0 2px;
+  padding-bottom:6px;border-bottom:1px solid var(--line)}
+footer{margin-top:26px;padding-top:18px;border-top:1px solid var(--line);
+  font-size:11.5px;color:var(--muted);line-height:1.7}
+footer b{color:var(--ink2)}
+footer ul{padding-left:16px;margin:8px 0}
+.tbtn{border:1px solid var(--line);background:none;color:var(--ink2);border-radius:99px;
+  padding:4px 11px;font-size:11.5px;cursor:pointer;white-space:nowrap}
+
+/* ── 공개형: 결과 해석 펼침 · 질문 CTA · 버전 표시 ── */
+.expandcard{margin:14px 0}
+.expandbtn{width:100%;border:1.5px solid var(--accent);background:var(--accent-soft);color:var(--accent);
+  border-radius:12px;padding:15px 18px;font-size:15.5px;font-weight:700;cursor:pointer;letter-spacing:-.01em}
+.expandbtn:hover{background:var(--accent);color:#fff}
+.expandbtn .sm{display:block;font-size:11.5px;font-weight:500;margin-top:3px;opacity:.8}
+.cta{border:1.5px solid var(--accent);background:var(--accent-soft);border-radius:var(--r);padding:18px 16px;margin:14px 0}
+.cta h3{margin:0 0 6px;font-size:15px;color:var(--accent)}
+.cta p{margin:0 0 12px;font-size:13px;color:var(--ink2);line-height:1.65}
+.cta a.btn{display:inline-block;text-decoration:none;background:var(--accent);border-color:var(--accent);color:#fff;font-size:14px;padding:11px 16px}
+.cta .fine{font-size:11px;color:var(--muted);margin:10px 0 0}
+.ytlink{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink2);text-decoration:none;
+  border:1px solid var(--line);border-radius:99px;padding:6px 14px;margin-top:12px}
+.ytlink:hover{border-color:var(--accent);color:var(--accent)}
+#appFooter{margin-top:26px;padding:14px 0 8px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);line-height:1.7}
+#appFooter b{color:var(--ink2)}
+#appFooter details{margin-top:4px}
+#appFooter summary{cursor:pointer;color:var(--ink2)}
+
+@media(min-width:620px){
+  .wrap{padding:0 24px 120px}
+  h1{font-size:27px}
+  .hero .big{font-size:24px}
+  .stepper .st{font-size:11.5px}
+}
+@media(max-width:400px){
+  .grid2{grid-template-columns:1fr}
+  .tiles{grid-template-columns:1fr}
+}
+@media print{
+  .stepper,.bottnav,#themeBtn,.tbtn,.no-print{display:none !important}
+  body{background:#fff}
+  .wrap{padding-bottom:20px}
+  .card,.hero{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="topbar">
+    <div>
+      <span class="badge" id="policyBadge">정부안 · 국회 심의 전 + 현행법 비교</span>
+      <h1>닥터마빈의 부동산 세금 시뮬레이터</h1>
+      <p class="sub">무료 계산 → 결과 심층 분석 · 재산세 | 종부세 | 양도세 | 취득세 | 증여세</p>
+    </div>
+    <button id="themeBtn">다크</button>
+  </div>
+</header>
+
+<div class="stepper" id="stepper"></div>
+
+<!-- ══════════ STEP 1 · 내 상황 ══════════ -->
+<section class="step" id="step1">
+  <div class="card">
+    <div class="stepnum">STEP 1 / 6</div>
+    <h2>지금 상황과 가장 가까운 것을 골라 주세요</h2>
+    <p class="hint">주택 수는 나 혼자가 아니라 <b>세대 전체</b>(배우자, 주민등록상 같은 세대의 가족) 기준입니다.</p>
+    <div class="opts" id="sitCards">
+      <button class="opt" data-sit="one_live"><b>1주택 · 실거주</b><span>1주택이고, 그 집에 살고 있어요</span></button>
+      <button class="opt" data-sit="one_away"><b>1주택 · 비거주</b><span>1주택이지만, 그 집에 살지 않아요 (전월세 거주·임대 등)</span></button>
+      <button class="opt" data-sit="two"><b>2주택</b><span>현재 세대 기준 2주택이에요 (일시적 2주택 포함)</span></button>
+      <button class="opt" data-sit="multi"><b>3주택 이상</b><span>세대 기준 3주택 이상 보유하고 있어요</span></button>
+      <button class="opt full" data-sit="unsure"><b>잘 모르겠어요</b><span>분양권·상속·특례가 섞여 있어 주택 수 판정이 복잡해요 — 입력값으로 잠정 분류해 드립니다</span></button>
+    </div>
+    <h3 class="mini-h">해당되는 항목이 있으면 표시해 주세요</h3>
+    <div class="chips">
+      <label class="chip"><input type="checkbox" data-right="presale"><span>분양권 보유</span></label>
+      <label class="chip"><input type="checkbox" data-right="occupancy"><span>조합원 입주권 보유</span></label>
+      <label class="chip"><input type="checkbox" data-right="inherited"><span>상속받은 주택 포함</span></label>
+    </div>
+    <p class="subtle">분양권·입주권은 양도세·취득세의 주택 수에는 포함되지만 종부세에는 포함되지 않습니다. 표시해 두시면 결과에 반영 범위를 안내해 드립니다.</p>
+  </div>
+</section>
+
+<!-- ══════════ STEP 2 · 주택 등록 ══════════ -->
+<section class="step" id="step2" hidden>
+  <div class="card">
+    <div class="stepnum">STEP 2 / 6</div>
+    <h2>보유 주택을 등록해 주세요</h2>
+    <p class="hint">주택마다 소재지·규제지역·가격·취득 정보를 입력합니다. ‘서울·수도권’과 ‘규제지역(조정대상지역)’은 다른 개념이라 따로 확인합니다.</p>
+    <div id="houseCards"></div>
+    <button id="addHouse">＋ 주택 추가</button>
+  </div>
+</section>
+
+<!-- ══════════ STEP 3 · 명의·거주 ══════════ -->
+<section class="step" id="step3" hidden>
+  <div class="card">
+    <div class="stepnum">STEP 3 / 6</div>
+    <h2>명의와 거주를 확인합니다</h2>
+    <p class="hint">종부세는 <b>사람별</b>로, 재산세는 <b>주택별</b>로 계산됩니다. 부부 공동명의 1주택은 ‘각자 납부’와 ‘1세대 1주택 특례’를 자동으로 비교해 드립니다.</p>
+    <div class="grid2">
+      <div>
+        <label class="mini">본인 나이 (2026년 기준)
+          <span class="inline-num"><input type="number" min="19" max="99" step="1" id="ageMe"><em>세</em></span>
+        </label>
+      </div>
+      <div id="ageSpouseWrap">
+        <label class="mini">배우자 나이
+          <span class="inline-num"><input type="number" min="19" max="99" step="1" id="ageSpouse"><em>세</em></span>
+        </label>
+      </div>
+    </div>
+    <div id="ownCards"></div>
+  </div>
+</section>
+
+<!-- ══════════ STEP 4 · 계산 목적 ══════════ -->
+<section class="step" id="step4" hidden>
+  <div class="card">
+    <div class="stepnum">STEP 4 / 6</div>
+    <h2>무엇을 알고 싶으세요?</h2>
+    <p class="hint">보유세(재산세+종부세)는 기본으로 계산됩니다. 필요한 항목을 추가로 선택하면 그에 맞는 질문만 이어집니다.</p>
+    <div class="opts" id="purposeCards">
+      <button class="opt sel" data-pp="hold" data-fixed="1"><b>계속 보유 <span class="stat info" style="margin-left:4px">기본</span></b><span>연도별 재산세·종부세, 과세 전환점</span></button>
+      <button class="opt" data-pp="sell"><b>매도</b><span>양도세, 언제 파는 게 유리한지</span></button>
+      <button class="opt" data-pp="acquire"><b>신규 취득</b><span>취득세와 취득 후 보유세 변화</span></button>
+      <button class="opt" data-pp="joint"><b>공동명의 검토</b><span>부부 개별납부 vs 특례, 명의 전환 총비용</span></button>
+      <button class="opt" data-pp="gift"><b>증여</b><span>증여세+취득세+양도세 총 이전비용</span></button>
+    </div>
+  </div>
+
+  <div class="card" id="sellForm" hidden>
+    <h2>매도 계획</h2>
+    <div class="grid2">
+      <div class="full">
+        <label class="mini" for="sellHouse">매도할 주택</label>
+        <select id="sellHouse"></select>
+      </div>
+      <div>
+        <label class="mini" for="sellDate">예상 양도 시기</label>
+        <input type="month" id="sellDate">
+        <p class="subtle">6월 1일 이전에 넘기면 그해 보유세(재산세·종부세)는 매수자가 부담합니다.</p>
+      </div>
+      <div>
+        <label class="mini">예상 양도가액
+          <span class="inline-num"><input type="number" step="0.5" min="0" id="sellPrice"><em>억원</em></span>
+        </label>
+      </div>
+      <div class="full">
+        <label class="mini">필요경비 (중개수수료·자본적지출 등, 취득세 포함)
+          <span class="inline-num"><input type="number" step="100" min="0" id="sellCost"><em>만원</em></span>
+        </label>
+      </div>
+      <div class="full chips">
+        <label class="chip"><input type="checkbox" id="sellSameYear"><span>같은 해 다른 부동산 양도 있음</span></label>
+        <label class="chip"><input type="checkbox" id="sellSenior"><span>65세 이상 · 수도권→지방 이주 예정</span></label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="acquireForm" hidden>
+    <h2>신규 취득 계획</h2>
+    <div class="grid2">
+      <div>
+        <label class="mini">취득가액
+          <span class="inline-num"><input type="number" step="0.5" min="0" id="acqPrice2"><em>억원</em></span>
+        </label>
+      </div>
+      <div>
+        <label class="mini" for="acqHouses2">취득 후 세대 주택 수</label>
+        <select id="acqHouses2">
+          <option value="1">1주택</option><option value="2" selected>2주택</option>
+          <option value="3">3주택</option><option value="4">4주택 이상</option>
+        </select>
+      </div>
+      <div class="full chips">
+        <label class="chip"><input type="checkbox" id="acqAdj2" checked><span>조정대상지역</span></label>
+        <label class="chip"><input type="checkbox" id="acqBig2"><span>전용 85㎡ 초과</span></label>
+        <label class="chip"><input type="checkbox" id="acqTemp2" checked><span>일시적 2주택 (종전주택 처분 예정)</span></label>
+        <label class="chip"><input type="checkbox" id="acqFirst2"><span>생애최초</span></label>
+      </div>
+    </div>
+    <p class="subtle">일시적 2주택 처분기한은 2026년 8월 4일 이후 취득분부터 3년 → 2년으로 줄어드는 것으로 발표되었습니다(정부안). 종전주택 처분 일정은 결과 화면에서 함께 안내합니다.</p>
+  </div>
+
+  <div class="card" id="jointForm" hidden>
+    <h2>공동명의 전환 검토</h2>
+    <div class="grid2">
+      <div class="full">
+        <label class="mini" for="jointHouse">대상 주택 (현재 단독명의)</label>
+        <select id="jointHouse"></select>
+      </div>
+      <div class="full">
+        <div class="rangeRow"><label class="mini" for="jointShare">배우자에게 이전할 지분</label><output id="jointShareOut">50%</output></div>
+        <input type="range" id="jointShare" min="10" max="90" step="5" value="50">
+      </div>
+      <div class="full">
+        <label class="mini">최근 10년 내 배우자에게 증여한 금액 (있다면)
+          <span class="inline-num"><input type="number" step="0.5" min="0" id="jointPrior" value="0"><em>억원</em></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="giftForm" hidden>
+    <h2>증여 계획</h2>
+    <div class="grid2">
+      <div class="full">
+        <label class="mini">증여 유형</label>
+        <div class="seg" id="giftType">
+          <button data-v="general" aria-pressed="true">일반 증여</button>
+          <button data-v="spouse_share" aria-pressed="false">배우자 지분 증여</button>
+          <button data-v="burden" aria-pressed="false">부담부증여</button>
+        </div>
+      </div>
+      <div class="full">
+        <label class="mini" for="giftHouse">대상 주택</label>
+        <select id="giftHouse"></select>
+      </div>
+      <div id="giftRelWrap">
+        <label class="mini" for="giftRel">받는 사람</label>
+        <select id="giftRel">
+          <option value="spouse">배우자</option>
+          <option value="child" selected>자녀 (성년)</option>
+          <option value="minor">자녀 (미성년)</option>
+          <option value="parent">부모</option>
+          <option value="other">기타 친족</option>
+        </select>
+      </div>
+      <div>
+        <label class="mini">증여 지분
+          <span class="inline-num"><input type="number" step="5" min="5" max="100" id="giftShare" value="100"><em>%</em></span>
+        </label>
+      </div>
+      <div>
+        <label class="mini">주택 전체 평가액 (시가)
+          <span class="inline-num"><input type="number" step="0.5" min="0" id="giftValue"><em>억원</em></span>
+        </label>
+        <p class="subtle" id="giftValueHint">비워두면 시세 환산값을 사용합니다.</p>
+      </div>
+      <div id="giftDebtWrap" hidden>
+        <label class="mini">수증자가 인수할 채무 (전세보증금·대출)
+          <span class="inline-num"><input type="number" step="0.5" min="0" id="giftDebt" value="0"><em>억원</em></span>
+        </label>
+      </div>
+      <div>
+        <label class="mini">최근 10년 내 같은 사람에게 증여한 금액
+          <span class="inline-num"><input type="number" step="0.5" min="0" id="giftPrior" value="0"><em>억원</em></span>
+        </label>
+      </div>
+      <div>
+        <label class="mini" for="giftDate">증여 예정 시기</label>
+        <input type="month" id="giftDate">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ STEP 5 · 가정 설정 ══════════ -->
+<section class="step" id="step5" hidden>
+  <div class="card">
+    <div class="stepnum">STEP 5 / 6</div>
+    <h2>계산 가정을 설정합니다</h2>
+    <p class="hint">기본값 그대로 두어도 됩니다. 모든 가정은 결과 화면에 그대로 표시됩니다.</p>
+    <h3 class="mini-h">정책 시나리오</h3>
+    <div class="seg" id="policyView">
+      <button data-v="both" aria-pressed="true">현행 + 정부안 비교</button>
+      <button data-v="current" aria-pressed="false">현행만</button>
+      <button data-v="reform" aria-pressed="false">정부안만</button>
+    </div>
+    <p class="subtle">8·3 정부안은 국회 심의 전입니다. 어느 쪽을 선택해도 결과에는 정책 상태 배지가 항상 붙습니다.</p>
+    <h3 class="mini-h">가격 가정 (연간 상승률 — 시세와 공시가격을 분리)</h3>
+    <div class="grid2">
+      <div>
+        <div class="rangeRow"><label class="mini" for="gMarket">시세 상승률</label><output id="gMarketOut">0%</output></div>
+        <input type="range" id="gMarket" min="-5" max="10" step="1" value="0">
+      </div>
+      <div>
+        <div class="rangeRow"><label class="mini" for="gOfficial">공시가격 상승률</label><output id="gOfficialOut">0%</output></div>
+        <input type="range" id="gOfficial" min="-5" max="10" step="1" value="0">
+      </div>
+    </div>
+    <p class="subtle">시세로 입력한 주택의 공시가격은 2026년 공동주택 기준 시세×69%를 참고값으로 사용합니다. 실제 공시가격을 아는 경우 STEP 2에서 ‘실제 공시가격’으로 입력하는 것이 정확합니다.</p>
+    <h3 class="mini-h">기타</h3>
+    <div class="chips">
+      <label class="chip"><input type="checkbox" id="optUrban" checked><span>재산세 도시지역분 포함 (대부분의 시가지)</span></label>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ STEP 6 · 입력 내용 확인 ══════════ -->
+<section class="step" id="step6" hidden>
+  <div class="card">
+    <div class="stepnum">STEP 6 / 6</div>
+    <h2>입력 내용을 확인해 주세요</h2>
+    <p class="hint">계산 전 마지막 확인입니다. <span class="stat ok">확정</span><span class="stat est">추정</span><span class="stat chk">확인 필요</span><span class="stat err">계산 불가</span> 항목을 점검하고 필요하면 수정하세요.</p>
+    <div id="confirmSummary"></div>
+    <div id="confirmStatus"></div>
+  </div>
+</section>
+
+<!-- ══════════ 결과 ══════════ -->
+<section class="step" id="stepR" hidden>
+  <div id="report"></div>
+</section>
+
+<footer id="appFooter">
+  <b>닥터마빈의 부동산 세금 시뮬레이터</b> · <span id="verLine"></span>
+  <details><summary>업데이트 내역</summary><ul id="verLog" style="padding-left:16px;margin:6px 0 0"></ul></details>
+  <div style="margin-top:6px">본 시뮬레이터는 공개된 법령·정부 발표와 사용자가 입력한 정보를 바탕으로 한 참고용 계산 도구입니다. 정부안은 국회 심의 및 최종 법령에 따라 변경될 수 있으며, 실제 세액은 개인별 사실관계에 따라 달라질 수 있습니다.</div>
+</footer>
+
+</div><!-- /wrap -->
+
+<div class="bottnav" id="bottnav">
+  <div class="navmsg" id="navMsg"></div>
+  <div class="in">
+    <button class="btn ghost" id="btnPrev">이전</button>
+    <button class="btn primary" id="btnNext">다음</button>
+  </div>
+</div>
+
+<script>
