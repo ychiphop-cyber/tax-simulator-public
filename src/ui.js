@@ -583,7 +583,7 @@ function renderReport() {
   const pv = inp.assumptions.policyView;
   const years = cur.map(r => r.year);
 
-  const ctx = { inp, valid, cur, ref, sens, thr, conf, concl, pv, years };
+  const ctx = { inp, valid, cur, ref, sens, thr, conf, concl, pv, years, inheritExp: inheritExpiryYear(inp) };
   R = ctx;
   ctx.sell = inp.purposes.includes('sell') ? { cur: sellSim(inp, 'current'), ref: sellSim(inp, 'reform') } : null;
   ctx.gift = inp.purposes.includes('gift') ? giftFull(inp) : null;
@@ -674,6 +674,7 @@ function heroHTML(c) {
     <div class="k">진단 결론 · ${RULES.reviewedAt} 기준</div>
     <div class="big">${esc(c.concl.head)}</div>
     <p class="sub2">${esc(c.concl.sub)}</p>
+    ${c.concl.extra ? `<p class="sub2" style="color:var(--accent);font-weight:700">${esc(c.concl.extra)}</p>` : ''}
     <div class="chiprow">
       <span class="grade ${c.conf.grade}">${c.conf.grade}</span>
       <span class="stat ${c.conf.grade === 'A' ? 'ok' : c.conf.grade === 'B' ? 'est' : 'chk'}">신뢰도 ${c.conf.grade} — ${esc(c.conf.why)}</span>
@@ -726,7 +727,8 @@ function whenHTML(c) {
   const rowsHtml = c.years.map((y, i) => {
     const a = c.cur[i], b = c.ref[i];
     const d = b.holdTax - a.holdTax;
-    return `<tr><td>${y}</td>
+    const expBadge = (c.inheritExp && c.inheritExp.year === y) ? ' <span class="stat chk">상속 특례 종료</span>' : '';
+    return `<tr><td>${y}${expBadge}</td>
       ${showCur ? `<td>${won(a.prop.total)}</td><td>${won(a.jong.total)}</td><td class="strong">${won(a.holdTax)}</td>` : ''}
       ${showRef ? `<td class="strong">${won(b.holdTax)}</td>` : ''}
       ${showCur && showRef ? `<td class="${d > 0 ? 'up' : d < 0 ? 'down' : ''}">${d === 0 ? '—' : (d > 0 ? '+' : '−') + won(Math.abs(d))}</td>` : ''}</tr>`;

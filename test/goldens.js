@@ -200,5 +200,38 @@ console.log('\nGC-3b 상속 특례 종료 상태 (flags.inherit=false)');
   T('  종부세 합계 1,905만', p.total, 1905);
 }
 
+/* ── P0-2 · 상속 특례 5년 만료의 연도별 반영 (지시서 §2 본안) ─────────
+   골든 값이 아니라 동작 검증: 2024-03 상속 → 2029년 6월 1일부터 다주택 전환. */
+console.log('\nP0-2 상속 특례 만료 — 2029년부터 다주택 전환');
+{
+  const inp = gc3Input(true);
+  const exp = E.inheritExpiryYear(inp);
+  TB('만료 연도 2029 판정', exp && exp.year === 2029, JSON.stringify(exp));
+  const ref = E.holdSim(inp, 'reform');
+  const cur = E.holdSim(inp, 'current');
+  TB('2028까지는 1주택 특례 (기본공제 14억)', ref[2].jong.persons[0].deduct === 14 * 억, E.won(ref[2].jong.persons[0].deduct));
+  TB('2029 정부안 — 다주택 기본공제(6.78억)로 전환', Math.abs(ref[3].jong.persons[0].deduct - 67778 * 만) <= TOL, E.won(ref[3].jong.persons[0].deduct));
+  TB('2029 정부안 — FMV 80%로 전환', Math.abs(ref[3].jong.persons[0].fair - 0.80) < 1e-9, String(ref[3].jong.persons[0].fair));
+  TB('2029 정부안 보유세가 2028 대비 급증', ref[3].holdTax > ref[2].holdTax + 300 * 만, `${(ref[2].holdTax / 만).toFixed(0)}만 → ${(ref[3].holdTax / 만).toFixed(0)}만`);
+  TB('2029 현행도 다주택 전환으로 증가', cur[3].holdTax > cur[2].holdTax + 100 * 만, `${(cur[2].holdTax / 만).toFixed(0)}만 → ${(cur[3].holdTax / 만).toFixed(0)}만`);
+  TB('2030도 다주택 유지', ref[4].jong.persons[0].deduct < 14 * 억, E.won(ref[4].jong.persons[0].deduct));
+  // 무기한 예외: 지분 40% 이하
+  const inp40 = gc3Input(true);
+  inp40.houses[1].shares = { me: 40, spouse: 0, other: 60 };
+  TB('지분 40% 이하 — 만료 없음', E.inheritExpiryYear(inp40) === null, JSON.stringify(E.inheritExpiryYear(inp40)));
+  // 무기한 예외: 지분 상당 공시가 저가 (수도권 6억)
+  const inpLow = gc3Input(true);
+  inpLow.houses[1].official = 5.5;
+  TB('지분 공시가 6억 이하(수도권) — 만료 없음', E.inheritExpiryYear(inpLow) === null, JSON.stringify(E.inheritExpiryYear(inpLow)));
+  // 상속개시일 미입력 — 제외 유지 + 만료 판정 불가
+  const inpNoDate = gc3Input(true);
+  inpNoDate.houses[1].acqDate = '';
+  TB('상속개시일 미입력 — 만료 판정 없음(제외 유지)', E.inheritExpiryYear(inpNoDate) === null && E.holdSim(inpNoDate, 'reform')[4].jong.persons[0].deduct === 14 * 억, '');
+  // 결론 문장에 전환 안내 포함
+  const valid = E.validateInput(inp);
+  const concl = E.conclusionOf(inp, cur, ref, valid, E.sensitivity(inp));
+  TB('결론 extra에 2029 전환 문구', !!(concl.extra && concl.extra.includes('2029')), String(concl.extra).slice(0, 60));
+}
+
 console.log(`\n골든 케이스: ${pass} 통과 / ${fail} 실패`);
 process.exit(fail ? 1 : 0);

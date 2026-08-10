@@ -313,17 +313,54 @@ function activeHouses(inp, opt = {}) {
 // P0-6 (종부세법 §8④): 1세대1주택 특례 판정 시 상속·지방저가·인구감소는 주택수에서 제외
 //                       (등록임대는 요건 복잡 → 자동화 대신 옵션+경고로 유지)
 // 일시적 2주택: 2주택 + temp2 플래그 → 1주택 지위 유지(처분기한 내 가정)
-function specialExcludedCount(houses) {
-  return houses.filter(h => h.flags && (h.flags.inherit || h.flags.lowLocal || h.flags.popDecline)).length;
+/* P0-2 (종부세법 시행령 §4의2): 상속주택 주택 수 제외는 시간 제한이 있다.
+   ① 상속개시일부터 5년 미경과 — 기간 경과 시 산입
+   ② 소유 지분 40% 이하 — 기간 제한 없음
+   ③ 지분 상당 공시가격 수도권 6억(그 외 3억) 이하 — 기간 제한 없음
+   asOf(과세기준일 YYYY-MM)가 주어지면 시간 축을 판정하고, 없으면 기존 동작(제외 유지)을 보존한다. */
+const METRO_REGIONS = ['서울', '경기', '인천'];
+function inheritForever(h) {
+  const maxShare = Math.max(shareOf(h, 'me'), shareOf(h, 'spouse'));
+  if (maxShare > 0 && maxShare <= 0.40) return true;
+  const metro = METRO_REGIONS.some(r => String(h.region || '').indexOf(r) === 0);
+  return pubOf(h) * (maxShare || 1) <= (metro ? 6 * 억 : 3 * 억);
 }
-function oneStatusOf(houses, rightsCount = 0) {
-  const excl = specialExcludedCount(houses);       // 특례 제외 대상 실주택 수
+function inheritExcludedAt(h, asOf) {
+  if (!(h.flags && h.flags.inherit)) return false;
+  if (inheritForever(h)) return true;
+  if (!asOf) return true;                    // 시점 미지정 경로(양도·증여 등)는 기존 동작 유지
+  if (!h.acqDate) return true;               // 상속개시일 미입력 — 판정 불가, 제외 유지(확인 문구 별도)
+  const yrs = yearsBetween(h.acqDate, asOf);
+  return yrs !== null && yrs < 5;
+}
+function specialExcludedCount(houses, asOf = null) {
+  return houses.filter(h => h.flags && (
+    (h.flags.inherit && inheritExcludedAt(h, asOf)) || h.flags.lowLocal || h.flags.popDecline
+  )).length;
+}
+function oneStatusOf(houses, rightsCount = 0, asOf = null) {
+  const excl = specialExcludedCount(houses, asOf);  // 특례 제외 대상 실주택 수
   const netHouses = houses.length - excl;           // 실질 주택수
   const netTotal = netHouses + rightsCount;         // 실질 + 권리
   if (netTotal === 1 && netHouses === 1) return { one: true, temp2: false, effCount: houses.length + rightsCount, excluded: excl };
   if (netTotal === 2 && netHouses === 2 && houses.some(h => h.flags && h.flags.temp2))
     return { one: true, temp2: true, effCount: houses.length + rightsCount, excluded: excl };
   return { one: false, temp2: false, effCount: houses.length + rightsCount, excluded: excl };
+}
+/** 시뮬레이션 구간(baseYear~+4) 안에서 상속 특례가 만료되는 첫 연도 (없으면 null) */
+function inheritExpiryYear(inp) {
+  const y0 = inp.assumptions.baseYear;
+  let best = null;
+  for (const h of (inp.houses || [])) {
+    if (!(h.flags && h.flags.inherit) || !h.acqDate || inheritForever(h)) continue;
+    for (let y = y0; y <= y0 + 4; y++) {
+      if (!inheritExcludedAt(h, `${y}-06`)) {
+        if (!best || y < best.year) best = { year: y, name: h.name || '상속주택' };
+        break;
+      }
+    }
+  }
+  return best;
 }
 function rightsCountOf(inp) {
   const r = inp && inp.rights ? inp.rights : {};
@@ -341,7 +378,7 @@ function adjYes(v) { return v === 'yes' || v === 'unknown'; } // 미확인은 �
 function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
   const houses = activeHouses(inp, opt);
   const isOnePT = houses.length === 1; // 재산세 1세대1주택 특례는 엄격히 1주택만
-  const stat = oneStatusOf(houses);
+  const stat = oneStatusOf(houses, 0, `${year}-06`); // P0-2: 상속 특례 5년 만료를 과세기준일 기준으로 판정
   const urban = inp.assumptions.urban !== false;
 
   const rows = houses.map(h => {
@@ -970,10 +1007,21 @@ function validateInput(inp) {
     if (h.flags) {
       // 방향 명시 원칙(수정 지시서 P0-1): 실제 계산이 사용자에게 유리한 방향인지
       // 불리한 방향인지를 문구에 그대로 적는다. '보수적'은 실제 보수적일 때만 쓴다.
-      if (h.flags.inherit) confirms.push({
-        code: 'SPECIAL',
-        msg: `${nm} — 상속주택을 종부세 1세대 1주택 판정에서 주택 수에 넣지 않고 계산했습니다(종합부동산세법 §8④, 사용자에게 유리한 방향). 요건을 충족하지 못하거나 특례 기간(상속개시일부터 5년)이 끝나면 다주택으로 판정되어 세액이 크게 오릅니다.`
-      });
+      if (h.flags.inherit) {
+        let tail = '';
+        if (!h.acqDate) tail = ' 상속개시일(취득 시기)이 없어 만료 시점을 판정하지 못했습니다 — STEP 2에서 입력해 주세요.';
+        else if (inheritForever(h)) tail = ' 소액지분·저가주택 요건에 해당해 기간 제한 없이 제외됩니다.';
+        else {
+          const exp = inheritExpiryYear({ houses: [h], assumptions: inp.assumptions });
+          tail = exp
+            ? ` 이 입력 기준 ${exp.year}년부터(상속 5년 경과) 다주택으로 전환되어 세액이 크게 오릅니다 — 연도별 표를 확인하세요.`
+            : ' 특례 기간(상속개시일부터 5년)이 끝나면 다주택으로 판정되어 세액이 크게 오릅니다.';
+        }
+        confirms.push({
+          code: 'SPECIAL',
+          msg: `${nm} — 상속주택을 종부세 1세대 1주택 판정에서 주택 수에 넣지 않고 계산했습니다(종합부동산세법 §8④, 사용자에게 유리한 방향).${tail}`
+        });
+      }
       if (h.flags.lowLocal) confirms.push({
         code: 'SPECIAL',
         msg: `${nm} — 지방 저가주택을 1세대 1주택 판정에서 주택 수에 넣지 않고 계산했습니다(유리한 방향). 공시가격·소재지 요건을 충족하지 못하면 다주택으로 판정됩니다.`
@@ -1051,6 +1099,19 @@ function confidenceGrade(inp, valid, sens) {
    ===================================================================== */
 function conclusionOf(inp, curRows, refRows, valid, sens) {
   const y0 = inp.assumptions.baseYear;
+  // P0-2: 상속 특례 만료가 시뮬레이션 구간 안이면 전환 문장을 함께 만든다.
+  let extra = null;
+  const exp = inheritExpiryYear(inp);
+  if (exp) {
+    const i = exp.year - y0;
+    const prevRef = refRows[i - 1], atRef = refRows[i];
+    if (prevRef && atRef) {
+      const jump = atRef.holdTax - prevRef.holdTax;
+      extra = `${exp.year}년부터 ${exp.name}의 상속주택 특례(5년)가 끝나 다주택으로 전환됩니다 — 정부안 기준 보유세가 전년 대비 ${won(jump)} 늘어납니다.`;
+    } else {
+      extra = `${exp.year}년부터 ${exp.name}의 상속주택 특례(5년)가 끝나 다주택으로 전환됩니다.`;
+    }
+  }
   const cur26 = curRows[0], ref28 = refRows[2] || refRows[refRows.length - 1];
   const curJong = cur26.jong.total;
   const refJong = ref28.jong.total;
@@ -1070,7 +1131,7 @@ function conclusionOf(inp, curRows, refRows, valid, sens) {
     return {
       code: 'UNCERTAIN',
       head: '주택 수·특례 확인 전에는 세액 범위를 확정하기 어렵습니다',
-      sub, diff
+      sub, diff, extra
     };
   }
   if (curJong <= 0 && refJong <= 0) {
@@ -1080,47 +1141,47 @@ function conclusionOf(inp, curRows, refRows, valid, sens) {
       return {
         code: 'CONDITIONAL',
         head: `공시가격 ${eok(t)}을 초과하면 종부세 과세가 시작될 수 있습니다`,
-        sub: '현재는 과세 대상이 아니지만 과세 경계에 가깝습니다. 실제 공시가격을 확인해 주세요.', diff
+        sub: '현재는 과세 대상이 아니지만 과세 경계에 가깝습니다. 실제 공시가격을 확인해 주세요.', diff, extra
       };
     }
     return {
       code: 'NO_CURRENT_IMPACT',
       head: '현재 입력 기준, 종합부동산세 과세 대상이 아닙니다',
-      sub: '현행법과 8·3 정부안 모두에서 과세 문턱(기본공제)에 미치지 않습니다.', diff
+      sub: '현행법과 8·3 정부안 모두에서 과세 문턱(기본공제)에 미치지 않습니다.', diff, extra
     };
   }
   if (curJong <= 0 && refJong > 0) {
     return {
       code: 'TAX_STARTS',
       head: `정부안 가정 시 ${ref28.year}년부터 종부세 과세가 시작됩니다`,
-      sub: `현행법에서는 과세 대상이 아니지만, 정부안 기준으로는 연 ${won(refJong)} 수준입니다.`, diff
+      sub: `현행법에서는 과세 대상이 아니지만, 정부안 기준으로는 연 ${won(refJong)} 수준입니다.`, diff, extra
     };
   }
   if (curJong > 0 && refJong <= 0) {
     return {
       code: 'TAX_ENDS',
       head: '정부안 가정 시 종부세 과세 대상에서 제외됩니다',
-      sub: `현행 기준 연 ${won(curJong)} → 정부안 기준 0원. 과세 문턱 상향의 효과입니다.`, diff
+      sub: `현행 기준 연 ${won(curJong)} → 정부안 기준 0원. 과세 문턱 상향의 효과입니다.`, diff, extra
     };
   }
   if (diff > 1000) {
     return {
       code: 'TAX_INCREASE',
       head: `정부안 가정 시 ${ref28.year}년 보유세가 현행 유지 대비 ${won(diff)} 증가합니다`,
-      sub: '공정시장가액비율·기본공제 개편의 영향입니다. 국회 통과 여부에 따라 달라집니다.', diff
+      sub: '공정시장가액비율·기본공제 개편의 영향입니다. 국회 통과 여부에 따라 달라집니다.', diff, extra
     };
   }
   if (diff < -1000) {
     return {
       code: 'TAX_DECREASE',
       head: `정부안 가정 시 ${ref28.year}년 보유세가 현행 유지 대비 ${won(-diff)} 감소합니다`,
-      sub: '과세 문턱·공제 개편의 효과입니다. 국회 통과 여부에 따라 달라집니다.', diff
+      sub: '과세 문턱·공제 개편의 효과입니다. 국회 통과 여부에 따라 달라집니다.', diff, extra
     };
   }
   return {
     code: 'NO_CHANGE',
     head: '현행과 정부안의 세부담 차이가 크지 않습니다',
-    sub: '입력 기준에서는 개편 영향이 제한적입니다.', diff
+    sub: '입력 기준에서는 개편 영향이 제한적입니다.', diff, extra
   };
 }
 
@@ -1134,6 +1195,7 @@ if (typeof module !== 'undefined' && module.exports) {
     holdCalcYear, holdSim, yangdoParams, yangdoCore, sellSim,
     acqBaseRate, acquisitionTax, giftAcquisitionTax, giftTaxCalc, giftFull,
     jointConvertAnalysis, thresholds, sensitivity, validateInput, confidenceGrade, conclusionOf,
+    inheritExcludedAt, inheritForever, inheritExpiryYear, specialExcludedCount,
     JR_NORMAL, JR_HEAVY, JR_2027, JR_2028, oneStatusOf
   };
 }
