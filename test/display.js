@@ -54,6 +54,7 @@ for (const [name, inp] of FIXTURES) {
         T(`${tag} rawBase = pub×fair`, Math.abs(pt.rawBase - pr.pub * pt.fair) < 1, `${pt.rawBase} vs ${pr.pub * pt.fair}`);
         // 상한 플래그 ⇔ base < rawBase
         T(`${tag} capped 플래그 일관`, pt.capped === (pt.base < pt.rawBase - 0.5), `capped=${pt.capped} base=${pt.base} raw=${pt.rawBase}`);
+        if (pt.capped) T(`${tag} 상한액=최종과표`, Math.abs(pt.base - pt.capBase) < 0.5, `base=${pt.base} cap=${pt.capBase}`);
         // 표시 과표에서 본세·도시·교육 역산
         const table = pt.useSpec ? E.PROP.rateSpec : E.PROP.rateStd;
         T(`${tag} 본세 역산`, Math.abs(pt.main - E.progressive(pt.base, table)) < 1, `${pt.main} vs ${E.progressive(pt.base, table)}`);

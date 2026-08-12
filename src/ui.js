@@ -16,8 +16,9 @@ const CONFIG = {
   GA4_ID: ''               // GA4 측정 ID 입력 시에만 이벤트 전송 (이벤트명·유입경로만, 입력값은 전송하지 않음)
 };
 const VERSION = {
-  current: 'v2.4', updated: '2026-08-11',
+  current: 'v2.5', updated: '2026-08-12',
   log: [
+    ['v2.5', '2026-08-12', '전면 점검 — 다주택 중과 유예(~2026-05-09) 양도일 판정, 매도 누적 보유세 오류 수정, 재산세 과세표준상한 산식 교정(§110의2), 공동명의 납세의무자 합의 선택, 상속주택 단독 보유 판정 수정, 입력 검증 강화'],
     ['v2.4', '2026-08-11', '실사례 검증 반영 — 상속주택 특례 안내 정정·5년 만료 연도별 자동 반영(시행령 §4의2), 재산세 과세표준상한 표시, 공정시장가액비율 가정 고지·토글, 세액공제 분해 표시'],
     ['v2.3', '2026-08-11', '문구 개편 — ‘결과 심층 분석’ 명칭, 질문 CTA 문구 정리, 유튜브 CTA 신설'],
     ['v2.2', '2026-08-11', '계산 엔진 동기화(r3) — 부담부증여 취득세 과표, 분양권·입주권 주택수 산입, 특례주택 판정, 재산세 과표상한(5%), 공동명의 개별납부 조정지역 80% 등 반영'],
@@ -71,7 +72,7 @@ function defaultInput() {
     people: { me: { age: 55 }, spouse: { age: 53 } },
     houses: [newHouse()],
     purposes: ['hold'],
-    sell: { houseId: null, date: '2027-03', price: '', cost: 3000, sameYearOther: false, seniorMove: false },
+    sell: { houseId: null, date: '2027-03-15', price: '', cost: 3000, sameYearOther: false, seniorMove: false, contractBefore: false },
     acquire: { price: 9, housesAfter: 2, adj: true, big85: false, temp2: true, first: false },
     joint: { houseId: null, share: 50, prior: 0 },
     gift: { type: 'general', relation: 'child', houseId: null, share: 100, value: '', debt: 0, prior: 0, date: '2026-10' },
@@ -348,6 +349,8 @@ function renderStep4() {
   $('#sellCost').value = S.inp.sell.cost;
   $('#sellSameYear').checked = !!S.inp.sell.sameYearOther;
   $('#sellSenior').checked = !!S.inp.sell.seniorMove;
+  const sc = $('#sellContract');
+  if (sc) sc.checked = !!S.inp.sell.contractBefore;
 
   $('#acqPrice2').value = S.inp.acquire.price;
   $('#acqHouses2').value = S.inp.acquire.housesAfter;
@@ -1032,6 +1035,7 @@ function acqHTML(c) {
     <div class="kv"><span>지방교육세</span><span>${won(a.edu)}</span></div>
     <div class="kv"><span>농어촌특별세</span><span>${a.rural > 0 ? won(a.rural) : '해당 없음 (85㎡ 이하)'}</span></div>
     <div class="kv total"><span>합계</span><span>${won(a.total)}</span></div>
+    ${c.inp.acquire.first ? '<div class="notebox">생애최초 감면은 일반 한도 <b>200만원</b>으로 계산했습니다. 소형·인구감소지역 주택 등 일부 유형은 300만원 한도가 적용될 수 있으나, 주택 유형·소재지 요건 확인이 필요해 자동 적용하지 않았습니다.</div>' : ''}
     <div class="notebox">일시적 2주택으로 표시한 경우 취득세 중과에서 제외해 계산했습니다. 종전주택 처분기한(2026.8.4 이후 취득분 2년 — 정부안)은 양도세·종부세 특례와 함께 매도 섹션에서 안내합니다.</div>
   </div>`;
 }
@@ -1082,15 +1086,20 @@ function renderDetailInner(c, year, scen) {
   r.prop.rows.forEach((pr, i) => {
     const nm = esc(pr.h.name || '주택 ' + (i + 1));
     h += kvRow(`${nm} — 공시 ${eok(pr.pub)} × ${Math.round(pr.pt.fair * 100)}%`, `= ${eok(pr.pt.rawBase)}`);
-    if (pr.pt.capped) h += kvRow('　과세표준상한 적용 (지방세법 §110③, 연 5%)', `→ 과세표준 ${eok(pr.pt.base)}`);
-    else h += kvRow('　과세표준', eok(pr.pt.base));
+    if (pr.pt.capped) {
+      h += kvRow('　과세표준상한액 (지방세법 §110의2: 전년 공시×당해 비율 + 당해 과표×5%)', eok(pr.pt.capBase));
+      h += kvRow('　최종 과세표준 (상한 적용)', eok(pr.pt.base));
+    } else h += kvRow('　과세표준' + (pr.pt.capBase != null ? ` (상한 ${eok(pr.pt.capBase)} 미달)` : ''), eok(pr.pt.base));
     h += kvRow(`　세율 적용${pr.pt.useSpec ? ' (1주택 특례세율)' : ''}`, `본세 ${won(pr.pt.main)} · 도시 ${won(pr.pt.city)} · 교육 ${won(pr.pt.edu)}`);
   });
   h += kvRow('재산세 합계', won(r.prop.total), 'total');
   const j = r.jong;
   if (j.mode === 'joint-compare') {
     j.joint.indiv.forEach(x => { h += jongDetailRows(x.r, `종부세 — ${x.key === 'me' ? '본인' : '배우자'} 개별납부 (${j.label || ''})`.trim()); });
-    h += jongDetailRows(j.joint.special, `종부세 — 1세대 1주택 특례 (${j.joint.repKey === 'me' ? '본인' : '배우자'} 명의 신청)`);
+    const repNm = j.joint.repKey === 'me' ? '본인' : '배우자';
+    const repTag = j.joint.repChoice === 'agreed' ? '50:50 합의 선택 — 유리한 쪽 추천' : '지분율 큰 자 · 법정';
+    h += jongDetailRows(j.joint.special, `종부세 — 1세대 1주택 특례 (납세의무자: ${repNm}, ${repTag})`);
+    if (j.joint.specialAlt) h += kvRow(`　참고: ${j.joint.specialAlt.key === 'me' ? '본인' : '배우자'} 선택 시`, won(j.joint.specialAlt.total));
     h += kvRow('부부 합산 비교', `개별 ${won(j.joint.indivTotal)} vs 특례 ${won(j.joint.special.total)} → <b>${j.joint.best === 'indiv' ? '개별납부' : '특례'} 유리</b>`, 'total');
   } else {
     j.persons.forEach(p => { h += jongDetailRows(p, `종부세 — ${p.taxpayer === 'spouse' ? '배우자' : '본인'} (${p.label})`); });
@@ -1108,7 +1117,17 @@ function renderDetailInner(c, year, scen) {
       if (sr.yangdo.taxRatio === 0) h += kvRow('양도소득세', '전액 비과세', 'total');
       else {
         if (sr.yangdo.exempt) h += kvRow('과세분 (12억 초과 비율)', Math.round(sr.yangdo.taxRatio * 100) + '%');
-        h += kvRow('장기보유특별공제율', Math.round(sr.yangdo.ltcgRate * 100) + '%' + (sr.yangdo.surcharge ? ` · 중과 +${Math.round(sr.yangdo.surcharge * 100)}%p` : ''));
+        {
+          const yr = sr.yangdo, hR = Math.round((yr.ltcgHoldRate || 0) * 100), lR = Math.round((yr.ltcgLiveRate || 0) * 100), tR = Math.round(yr.ltcgRate * 100);
+          let comp = `${tR}%`;
+          if (hR && lR && Math.abs(hR + lR - tR) < 1) comp = `보유 ${hR}% + 거주 ${lR}% = ${tR}%`;
+          else if (hR && lR) comp = hR + lR > tR ? `보유 ${hR}% + 거주 ${lR}% → 상한 ${tR}%` : `보유 ${hR}%·거주 ${lR}% 중 큰 값 = ${tR}%`;
+          else if (hR) comp = `보유 ${hR}%`;
+          else if (lR) comp = `거주 ${lR}%`;
+          h += kvRow('장기보유특별공제율 (' + comp + ')' + (yr.surcharge ? ` · 중과 +${Math.round(yr.surcharge * 100)}%p` : ''), tR + '%');
+          const ow0 = yr.owners && yr.owners[0];
+          if (ow0 && ow0.ltcgCapped) h += kvRow('　장특공제 한도 적용 (정부안)', `한도 ${won(ow0.ltcgCap)} → 공제액 ${won(ow0.ltcg)}`);
+        }
         sr.yangdo.owners.forEach(o => {
           h += kvRow(`${o.key === 'me' ? '본인' : o.key === 'spouse' ? '배우자' : '제3자'} (지분 ${Math.round(o.share * 100)}%) — 과표 ${won(o.base)}`, `세액 ${won(o.tax)} + 지방세 ${won(o.local)}`);
         });
@@ -1398,6 +1417,7 @@ function wire() {
   bind('#sellCost', 'sell.cost');
   bind('#sellSameYear', 'sell.sameYearOther', { evt: 'change' });
   bind('#sellSenior', 'sell.seniorMove', { evt: 'change' });
+  bind('#sellContract', 'sell.contractBefore', { evt: 'change' });
   bind('#acqPrice2', 'acquire.price');
   bind('#acqHouses2', 'acquire.housesAfter', { evt: 'change' });
   bind('#acqAdj2', 'acquire.adj', { evt: 'change' });

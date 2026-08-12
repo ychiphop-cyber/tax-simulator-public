@@ -378,9 +378,9 @@ footer ul{padding-left:16px;margin:8px 0}
         <select id="sellHouse"></select>
       </div>
       <div>
-        <label class="mini" for="sellDate">예상 양도 시기</label>
-        <input type="month" id="sellDate">
-        <p class="subtle">6월 1일 이전에 넘기면 그해 보유세(재산세·종부세)는 매수자가 부담합니다.</p>
+        <label class="mini" for="sellDate">예상 양도일 (잔금일)</label>
+        <input type="date" id="sellDate">
+        <p class="subtle">6월 1일까지 넘기면 그해 보유세는 매수자 부담입니다. 다주택 중과 한시 배제는 <b>2026년 5월 9일 양도분까지</b>라 일 단위 날짜가 판정에 사용됩니다.</p>
       </div>
       <div>
         <label class="mini">예상 양도가액
@@ -395,7 +395,9 @@ footer ul{padding-left:16px;margin:8px 0}
       <div class="full chips">
         <label class="chip"><input type="checkbox" id="sellSameYear"><span>같은 해 다른 부동산 양도 있음</span></label>
         <label class="chip"><input type="checkbox" id="sellSenior"><span>65세 이상 · 수도권→지방 이주 예정</span></label>
+        <label class="chip"><input type="checkbox" id="sellContract"><span>2026-05-09 이전 매매계약 체결 (경과규정)</span></label>
       </div>
+      <p class="subtle">경과규정 체크 시 유예 종료 후 양도에도 중과 배제를 적용해 계산합니다 — 계약·계약금 수령 시점 증빙 등 실제 적용 가능 여부는 세무전문가 확인이 필요합니다.</p>
     </div>
   </div>
 
