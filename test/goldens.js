@@ -5,6 +5,14 @@
    ⚠ 이 기대값을 코드에 맞추어 수정하지 말 것. 값이 달라지면 코드가
      바뀐 것이므로 원인을 먼저 보고한다. (지시서 §7)
    허용 오차: 화면 반올림 단위(만원) 기준 ±1만원 = ±10,000원
+
+   [2026-08-12 갱신] 점검 지시서 이슈 3(재산세 과세표준상한 산식 교정, 지방세법
+   §110의2: 상한액 = 직전연도 시가표준액×당해 공정시장가액비율 + 당해 과표×5%)에
+   따라 2027년 이후 셀을 갱신했다. 상승률 0%에서는 상한이 걸리지 않으므로 옛 값
+   (793만 등)은 잘못된 상한식의 산물이었다. 갱신값은 test/gen_expected.js(엔진과
+   독립된 reference.js 법정 산식)로 산출했고, GC-1 2027 현행(재산세 876.72만 +
+   종부 142.32만 = 1,019.0만)은 수기 검산과 일치한다. 종부세 상세(공제·한도 등)
+   골든은 전부 원값 그대로다.
    ═══════════════════════════════════════════════════════════════════ */
 const E = require('../src/engine.js');
 const 만 = E.만, 억 = E.억;
@@ -69,14 +77,14 @@ console.log('\nGC-1 비거주 1주택 · 부부 공동명의 50/50 · 공시 25.
   T('2026 현행 합계 814만', cur[0].holdTax, 814);
   T('2026 재산세 639만', cur[0].prop.total, 639);
   T('2026 종부세 175만', cur[0].jong.total, 175);
-  T('2027 현행 793만', cur[1].holdTax, 793);
-  T('2028 현행 804만', cur[2].holdTax, 804);
-  T('2029 현행 815만', cur[3].holdTax, 815);
-  T('2030 현행 825만', cur[4].holdTax, 825);
-  T('2027 정부안 1,210만', ref[1].holdTax, 1210);
-  T('2028 정부안 1,445만', ref[2].holdTax, 1445);
-  T('2029 정부안 1,456만', ref[3].holdTax, 1456);
-  T('2030 정부안 1,466만', ref[4].holdTax, 1466);
+  T('2027 현행 1,019만 (상한 미작동·특례비율 일몰)', cur[1].holdTax, 1019);
+  T('2028 현행 1,019만', cur[2].holdTax, 1019);
+  T('2029 현행 1,019만', cur[3].holdTax, 1019);
+  T('2030 현행 1,019만', cur[4].holdTax, 1019);
+  T('2027 정부안 1,435.8만', ref[1].holdTax, 1435.8);
+  T('2028 정부안 1,659.7만', ref[2].holdTax, 1659.7);
+  T('2029 정부안 1,659.7만', ref[3].holdTax, 1659.7);
+  T('2030 정부안 1,659.7만', ref[4].holdTax, 1659.7);
   const j = ref[2].jong;
   TB('2028 joint-compare 모드', j.mode === 'joint-compare', j.mode);
   const me = j.joint.indiv[0].r;
@@ -105,7 +113,7 @@ console.log('\nGC-1b 거주 여부만 변경 (실거주)');
   const cur = E.holdSim(inp, 'current');
   const ref = E.holdSim(inp, 'reform');
   T('2026 현행 814만 (GC-1과 동일)', cur[0].holdTax, 814);
-  T('2028 정부안 853만', ref[2].holdTax, 853);
+  T('2028 정부안 1,068.3만', ref[2].holdTax, 1068.3);
   TB('2028 현행 대비 +49만 내외', Math.abs((ref[2].holdTax - cur[2].holdTax) - 49.3 * 만) <= TOL, ((ref[2].holdTax - cur[2].holdTax) / 만).toFixed(1) + '만');
   const j = ref[2].jong;
   TB('개별납부 기본공제 각 9억(거주)', j.joint.indiv.every(x => x.r.deduct === 9 * 억), E.won(j.joint.indiv[0].r.deduct));
@@ -128,10 +136,10 @@ console.log('\nGC-2 초고가 1주택 · 단독 · 공시 45억 · 66세/거주 
   T('2026 현행 합계 1,568만', cur[0].holdTax, 1568);
   T('2026 재산세 1,180만', cur[0].prop.total, 1180);
   T('2026 종부세 388만', cur[0].jong.total, 388);
-  T('2027 현행 1,561만', cur[1].holdTax, 1561);
-  T('2028 현행 1,580만', cur[2].holdTax, 1580);
-  T('2027 정부안 2,730만', ref[1].holdTax, 2730);
-  T('2028 정부안 3,572만', ref[2].holdTax, 3572);
+  T('2027 현행 1,958.1만', cur[1].holdTax, 1958.1);
+  T('2028 현행 1,958.1만', cur[2].holdTax, 1958.1);
+  T('2027 정부안 2,947.3만', ref[1].holdTax, 2947.3);
+  T('2028 정부안 3,949.4만', ref[2].holdTax, 3949.4);
   const p = ref[2].jong.persons[0];
   T('  2028 과표 21억7,000만', p.base, 217000);
   T('  2028 산출세액 3,080만', p.gross, 3080);
@@ -140,13 +148,13 @@ console.log('\nGC-2 초고가 1주택 · 단독 · 공시 45억 · 66세/거주 
   T('  세액공제 차감 600만 (한도)', p.credit, 600);
   TB('  한도 적용 플래그', p.creditCap === 600 * 만, String(p.creditCap));
   T('  종부세 합계 2,351만', p.total, 2351);
-  T('  재산세 1,221만', ref[2].prop.total, 1221);
+  T('  재산세 1,598.4만 (45억×60%, 상한 미작동)', ref[2].prop.total, 1598.4);
   const jc = E.jointConvertAnalysis(inp);
   T('전환: 이전 지분 평가액 32억6,087만', jc.value, 326087);
   T('전환: 증여세 8억7,722만', jc.gt.tax, 87722);
   T('전환: 증여 취득세 1억2,391만', jc.at.total, 12391);
   T('전환: 비용 합계 10억113만', jc.cost, 100113);
-  TB('전환: 연평균 절감 492만 내외', Math.abs(jc.annual - 492 * 만) <= TOL, (jc.annual / 만).toFixed(1) + '만');
+  TB('전환: 연평균 절감 458.6만 내외', Math.abs(jc.annual - 458.6 * 만) <= TOL, (jc.annual / 만).toFixed(1) + '만');
   TB('전환: 손익분기 60년 이상', jc.breakeven === null || jc.breakeven > 60, String(jc.breakeven));
 }
 
@@ -246,7 +254,7 @@ console.log('\nP1-2 재산세 1주택 특례비율 가정 토글');
   };
   const sunset = E.holdSim(mk(false), 'current');
   const keep = E.holdSim(mk(true), 'current');
-  T('기본(일몰) 2027 = 793만 (골든 유지)', sunset[1].holdTax, 793);
+  T('기본(일몰) 2027 = 1,019만', sunset[1].holdTax, 1019);
   TB('유지 가정 시 2027 재산세 감소', keep[1].prop.total < sunset[1].prop.total - 10 * 만,
     `${(keep[1].prop.total / 만).toFixed(0)}만 vs ${(sunset[1].prop.total / 만).toFixed(0)}만`);
   TB('유지 가정 2027 공정비율 45%', Math.abs(keep[1].prop.rows[0].pt.fair - 0.45) < 1e-9, String(keep[1].prop.rows[0].pt.fair));

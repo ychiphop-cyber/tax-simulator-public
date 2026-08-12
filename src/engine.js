@@ -159,24 +159,26 @@ function fairRateOne(pub, year) {
   for (const [cap, r] of PROP.fairOne) if (pub <= cap) return r;
   return 0.45;
 }
-// P0-3B (지방세법 §110 ③ + 시행령 §109의2, 2024 시행): 주택 재산세 과세표준상한제
-// 과세표준상한액 = 직전연도 과세표준 + (당해연도 과세표준 − 직전연도) × 5%
-function propertyTax(pub, isOneHH, urban = true, prevBase = null, year = null, keepSpecial = false) {
+// 과세표준상한제 (지방세법 §110의2, 2024 시행) — 2026-08-12 점검 이슈 3에서 산식 재구현:
+//   과세표준상한액 = 직전 연도 과세표준상당액 + (당해연도 시가표준액으로 산정한 과세표준 × 상한율 5%)
+//   직전 연도 과세표준상당액 = 직전 연도 시가표준액(공시가격) × 당해연도 공정시장가액비율
+//   → prevPub(직전 연도 공시가격)을 체이닝하며, 확정 과표가 아니라 공시가격을 넘긴다.
+function propertyTax(pub, isOneHH, urban = true, prevPub = null, year = null, keepSpecial = false) {
   // P1-2: keepSpecial=true → 1주택 43~45% 특례가 2027년 이후에도 연장된다고 가정 (기본값은 일몰)
   const fair = isOneHH ? fairRateOne(pub, keepSpecial ? null : year) : PROP.fairOther;
   let base = pub * fair;
   const rawBase = base;
-  let capped = false;
-  if (prevBase != null && prevBase > 0 && base > prevBase) {
-    const capBase = prevBase + (base - prevBase) * 0.05;
-    if (capBase < base) { base = capBase; capped = true; }
+  let capBase = null, capped = false;
+  if (prevPub != null && prevPub > 0) {
+    capBase = prevPub * fair + rawBase * 0.05;
+    if (rawBase > capBase) { base = capBase; capped = true; }
   }
   // 특례세율(공시 9억 이하 1세대1주택)은 지방세법 §111의2에 일몰 없이 상시 규정 → 연도 무관
   const useSpec = isOneHH && pub <= PROP.specCap;
   const main = progressive(base, useSpec ? PROP.rateSpec : PROP.rateStd);
   const city = urban ? base * PROP.urban : 0;
   const edu = main * PROP.edu;
-  return { pub, fair, base, rawBase, capped, useSpec, main, city, edu, total: main + city + edu };
+  return { pub, fair, base, rawBase, capBase, capped, useSpec, main, city, edu, total: main + city + edu };
 }
 
 /* =====================================================================
@@ -337,13 +339,29 @@ function inheritExcludedAt(h, asOf) {
   const yrs = yearsBetween(h.acqDate, asOf);
   return yrs !== null && yrs < 5;
 }
+/* 이슈 6A: 지방 저가·인구감소 특례는 법정 요건(소재지·공시가격) 충족 시에만 반영.
+   지방 저가주택: 수도권(서울·경기·인천) 밖 + 공시 3억 이하 (종부세법 §8④3, 시행령 §4의2).
+   인구감소지역: 수도권 밖 + 공시 4억 이하로 잠정 적용 — 세부 요건(지정지역 목록·취득시기)은 확인 필요. */
+function lowLocalEligible(h) {
+  const metro = METRO_REGIONS.some(r => String(h.region || '').indexOf(r) === 0);
+  return !metro && pubOf(h) <= 3 * 억;
+}
+function popDeclineEligible(h) {
+  const metro = METRO_REGIONS.some(r => String(h.region || '').indexOf(r) === 0);
+  return !metro && pubOf(h) <= 4 * 억;
+}
 function specialExcludedCount(houses, asOf = null) {
   return houses.filter(h => h.flags && (
-    (h.flags.inherit && inheritExcludedAt(h, asOf)) || h.flags.lowLocal || h.flags.popDecline
+    (h.flags.inherit && inheritExcludedAt(h, asOf)) ||
+    (h.flags.lowLocal && lowLocalEligible(h)) ||
+    (h.flags.popDecline && popDeclineEligible(h))
   )).length;
 }
 function oneStatusOf(houses, rightsCount = 0, asOf = null) {
-  const excl = specialExcludedCount(houses, asOf);  // 특례 제외 대상 실주택 수
+  // 이슈 5: 주택 수 제외 특례(§8④)는 '다른 주택과 함께 보유'를 전제로 한다.
+  // 상속주택 등만 보유한 사람은 0주택이 아니라 그 주택 기준 1세대 1주택자다.
+  const exclRaw = specialExcludedCount(houses, asOf);
+  const excl = Math.min(exclRaw, Math.max(0, houses.length - 1));
   const netHouses = houses.length - excl;           // 실질 주택수
   const netTotal = netHouses + rightsCount;         // 실질 + 권리
   if (netTotal === 1 && netHouses === 1) return { one: true, temp2: false, effCount: houses.length + rightsCount, excluded: excl };
@@ -387,11 +405,11 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
 
   const rows = houses.map(h => {
     const pub = pubAt(h, year, inp);
-    // P0-3B: house.id별 직전연도 과세표준 체이닝 (prevMap에 저장)
-    const pbKey = `pb|${scen}|${h.id}`;
-    const prevBase = prevMap ? prevMap[pbKey] : null;
-    const pt = propertyTax(pub, isOnePT, urban, prevBase, year, !!inp.assumptions.propFairKeep);
-    if (prevMap) prevMap[pbKey] = pt.base;
+    // §110의2: house.id별 직전 연도 '시가표준액(공시가격)' 체이닝 (prevMap에 저장)
+    const ppKey = `pp|${scen}|${h.id}`;
+    const prevPub = prevMap ? prevMap[ppKey] : null;
+    const pt = propertyTax(pub, isOnePT, urban, prevPub, year, !!inp.assumptions.propFairKeep);
+    if (prevMap) prevMap[ppKey] = pub;
     return { h, pub, pt };
   });
   const prop = {
@@ -459,23 +477,36 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
     });
     const indivTotal = indiv.reduce((s, x) => s + x.r.total, 0);
 
-    // B) 1세대 1주택 특례 — 지분 큰 자(동률이면 본인)가 전체 합산 납부
-    const rep = tps.reduce((a, b) => (b.pubSum > a.pubSum ? b : a), tps[0]);
+    // B) 1세대 1주택 특례 — 납세의무자: 지분율 큰 자 (지분율이 같으면 합의로 정하는 자
+    //    — 종부세법 시행령 §5의2. 동률이면 두 경우를 모두 계산해 유리한 쪽을 추천)
     const pubAll = rows.reduce((s, r) => s + r.pub, 0);
     const aggAll = rows.reduce((s, r) => s + r.pub * r.pt.fair, 0);
-    const special = jongbuPerson({
-      year, scen, pubSum: pubAll, houseCount: houses.length, hasAdj: rows.some(r => adjYes(r.h.adjNow)),
-      isOne: true, oneLive, liveShare: oneLive ? 1 : 0,
-      age: rep.age, holdY, liveY,
-      aggPBase: aggAll, avgFair: pubAll > 0 ? aggAll / pubAll : PROP.fairOther,
-      propMainPaid: prop.main,
-      prevTotal: prevOf('special')
+    const tie = Math.abs(tps[0].pubSum - tps[1].pubSum) < 1;
+    const candidates = tie ? tps : [tps.reduce((a, b) => (b.pubSum > a.pubSum ? b : a), tps[0])];
+    const specials = candidates.map(rep => {
+      const r = jongbuPerson({
+        year, scen, pubSum: pubAll, houseCount: houses.length, hasAdj: rows.some(x => adjYes(x.h.adjNow)),
+        isOne: true, oneLive, liveShare: oneLive ? 1 : 0,
+        age: rep.age, holdY, liveY,
+        aggPBase: aggAll, avgFair: pubAll > 0 ? aggAll / pubAll : PROP.fairOther,
+        propMainPaid: prop.main,
+        prevTotal: prevOf(`special|${rep.key}`)
+      });
+      setPrev(`special|${rep.key}`, r.burdenBase || prop.main);
+      return { key: rep.key, r };
     });
-    setPrev('special', special.burdenBase || prop.main);
+    const bestSp = specials.reduce((a, b) => (b.r.total < a.r.total ? b : a), specials[0]);
+    const special = bestSp.r;
+    const specialAlt = specials.length > 1 ? specials.find(x => x.key !== bestSp.key) : null;
 
     const best = indivTotal <= special.total ? 'indiv' : 'special';
     jong.mode = 'joint-compare';
-    jong.joint = { indiv, indivTotal, special, best, repKey: rep.key };
+    jong.joint = {
+      indiv, indivTotal, special, best,
+      repKey: bestSp.key,
+      repChoice: tie ? 'agreed' : 'statutory',   // agreed: 합의 선택 가능(유리한 쪽 추천) / statutory: 지분 큰 자 법정
+      specialAlt: specialAlt ? { key: specialAlt.key, total: specialAlt.r.total } : null
+    };
     jong.total = Math.min(indivTotal, special.total);
     jong.persons = indiv.map(x => x.r);
   } else {
@@ -524,6 +555,16 @@ function holdSim(inp, scen, opt = {}) {
 /* =====================================================================
    3. 양도소득세 — 소유자(지분)별
    ===================================================================== */
+/* 이슈 1: 다주택자 조정대상지역 중과 한시 배제 — 2026-05-09 양도분까지 (소득세법 시행령 §167의3 등,
+   기획재정부 고시 기준일. 재연장 여부는 미정 — 이후 양도분은 중과 원칙 복귀로 계산).
+   월 단위 입력은 2026년 4월까지만 확정 배제, 5월은 일 단위 입력 필요(미입력 시 보수적으로 중과). */
+const HEAVY_SUSPEND_END = '2026-05-09';
+function heavySuspendedAt(dateStr) {
+  if (!dateStr) return false;
+  const d = String(dateStr);
+  if (d.length >= 10) return d.slice(0, 10) <= HEAVY_SUSPEND_END;
+  return d <= '2026-04';
+}
 const INCOME_RATES = [
   [1400 * 만, 0.06, 0], [5000 * 만, 0.15, 126 * 만], [8800 * 만, 0.24, 576 * 만],
   [1.5 * 억, 0.35, 1544 * 만], [3 * 억, 0.38, 1994 * 만], [5 * 억, 0.40, 2594 * 만],
@@ -596,8 +637,8 @@ function yangdoCore(o) {
   const shortTerm = (o.holdY || 0) < 2;
   const heavy = !shortTerm && !o.isOne && (o.heavyCount || 0) >= 2;
 
-  // 장기보유특별공제
-  let rate = 0;
+  // 장기보유특별공제 (분해 표시: 보유분/거주분 — §7)
+  let rate = 0, holdPart = 0, livePart = 0;
   const hY = Math.floor(o.holdY || 0), lY = Math.floor(o.liveY || 0);
   if (shortTerm) {
     // 단기 — 장특 없음
@@ -605,14 +646,22 @@ function yangdoCore(o) {
     d.notes.push('조정대상지역 다주택 중과 — 장기보유특별공제 배제');
   } else if (exempt && lY >= 2 && hY >= 3) {
     const t = P.one;
-    rate = Math.min(0.80, Math.min(t.liveMax, t.live * lY) + Math.min(t.holdMax, t.hold * hY));
+    livePart = Math.min(t.liveMax, t.live * lY);
+    holdPart = Math.min(t.holdMax, t.hold * hY);
+    rate = Math.min(0.80, livePart + holdPart);
   } else if (hY >= 3) {
     const t = P.gen;
-    if (t.mode === 'hold') rate = Math.min(t.holdMax, t.hold * hY);
-    else if (t.mode === 'max') rate = Math.max(Math.min(t.holdMax, t.hold * hY), Math.min(t.liveMax, t.live * lY));
-    else rate = (lY >= (t.minLive || 0)) ? Math.min(t.liveMax, t.live * lY) : 0;
+    if (t.mode === 'hold') rate = holdPart = Math.min(t.holdMax, t.hold * hY);
+    else if (t.mode === 'max') {
+      holdPart = Math.min(t.holdMax, t.hold * hY);
+      livePart = Math.min(t.liveMax || 0, (t.live || 0) * lY);
+      rate = Math.max(holdPart, livePart);
+    }
+    else rate = livePart = (lY >= (t.minLive || 0)) ? Math.min(t.liveMax, t.live * lY) : 0;
   }
   d.ltcgRate = rate;
+  d.ltcgHoldRate = holdPart;
+  d.ltcgLiveRate = livePart;
 
   const surRate = heavy ? ((o.heavyCount >= 3) ? P.sur[3] : P.sur[2]) : 0;
   d.surcharge = surRate;
@@ -673,58 +722,86 @@ function sellSim(inp, scen) {
   const h = inp.houses.find(x => x.id === s.houseId) || inp.houses[0];
   if (!h) return null;
   const y0 = inp.assumptions.baseYear;
-  const saleM = (ym(s.date) ? ym(s.date).m : 6);
-  const before61 = saleM < 6;
+  const sd = ym(s.date);
+  const saleM = sd ? sd.m : 6;
+  const dayMatch = /^\d{4}-\d{1,2}-(\d{1,2})/.exec(String(s.date || ''));
+  const saleDay = dayMatch ? +dayMatch[1] : null;
+  // 이슈 2: 과세기준일(6/1) 판정 — 잔금일이 6월 1일 이전(당일 포함)이면 그해 보유세는 매수자 부담.
+  // 일 미입력 시 5월까지만 제외, 6월은 보수적으로 매도자 부담 처리.
+  const before61 = saleM < 6 || (saleM === 6 && saleDay != null && saleDay <= 1);
 
   const holdRows = holdSim(inp, scen);
   const holdRowsEx = holdSim(inp, scen, { excludeId: h.id });
 
+  // 이슈 5: 양도 대상이 특례주택(상속 등)이면 그 주택 자신을 주택 수에서 제외해
+  // 비과세를 만들 수 없다 → 대상 주택의 제외 플래그를 끄고 주택 수를 판정한다.
+  const targetFlagged = h.flags && (h.flags.inherit || h.flags.lowLocal || h.flags.popDecline);
+  const judgeHouses = targetFlagged
+    ? inp.houses.map(x => x.id === h.id
+      ? Object.assign({}, x, { flags: Object.assign({}, x.flags, { inherit: false, lowLocal: false, popDecline: false }) })
+      : x)
+    : inp.houses;
+  const rc = rightsCountOf(inp);   // P0-5: 분양권·입주권 주택 수 산입
+  const otherSh = shareOf(h, 'other');
+
   const rows = [];
-  let cum = 0;
   for (let i = 0; i < holdRows.length; i++) {
     const Y = y0 + i;
     const saleYM = `${Y}-${String(saleM).padStart(2, '0')}`;
-    const holdThis = before61 ? (holdRows[i].holdTax - (function () {
-      // 6월 1일 전 매도 시 그 해 매도주택 보유세 제외 (전체 재계산으로 근사)
-      return holdRows[i].holdTax - holdRowsEx[i].holdTax;
-    })()) : holdRows[i].holdTax;
+    const saleDate = saleDay != null ? `${saleYM}-${String(saleDay).padStart(2, '0')}` : saleYM;
 
-    const others = activeHouses(inp);
-    const rc = rightsCountOf(inp);   // P0-5: 매도 시점의 잔여 주택 수 + 권리
-    const stat = oneStatusOf(others, rc);
+    // 이슈 2: 매도 전 연도는 전체 보유세 유지, 매도 연도만 6/1 판정으로 제외
+    const holdThis = before61 ? holdRowsEx[i].holdTax : holdRows[i].holdTax;
+    let cum = 0;
+    for (let k = 0; k < i; k++) cum += holdRows[k].holdTax;
+    cum += holdThis;
+
+    const stat = oneStatusOf(judgeHouses, rc, saleYM);
     const needLive = adjYes(h.adjAcq) && (!h.acqDate || h.acqDate >= '2017-08');
     const heavyAdj = adjYes(h.adjSale);
+    // 이슈 6B: 제3자 지분의 세액은 합산하지 않는다 (본인·배우자 귀속분만)
     const owners = [];
     for (const key of ['me', 'spouse']) {
       const sh = shareOf(h, key);
       if (sh > 0) owners.push({ key, share: sh, age: ((inp.people || {})[key] || {}).age + (Y - y0) || 0 });
     }
-    const otherSh = shareOf(h, 'other');
-    if (otherSh > 0) owners.push({ key: 'other', share: otherSh, age: 0 });
 
     const holdY = h.acqDate ? (yearsBetween(h.acqDate, saleYM) || 0) : 0;
     const liveY = liveYearsOf(h.livePeriods, saleYM);
     const salePrice = (s.price || 0) * 억 * Math.pow(1 + (inp.assumptions.marketGrowth || 0) / 100, Y - y0);
+
+    // 이슈 1: 중과 한시 배제(~2026-05-09) + 경과규정(종료일 전 계약) 선택 입력
+    const suspended = heavySuspendedAt(saleDate) || !!s.contractBefore;
 
     const yd = yangdoCore({
       year: Y, scen,
       sale: salePrice, acq: (h.acqPrice || 0) * 억, cost: (s.cost || 0) * 만,
       holdY, liveY,
       isOne: stat.one, needLive,
-      heavyCount: (!stat.one && heavyAdj) ? Math.min(3, others.length + rc) : 0,
+      heavyCount: (!stat.one && heavyAdj && !suspended) ? Math.min(3, inp.houses.length + rc) : 0,
       fullPrice: salePrice,
       owners,
       sameYearOther: !!s.sameYearOther,
       seniorMove: !!s.seniorMove
     });
+    if (!stat.one && heavyAdj && suspended) {
+      yd.notes.push(s.contractBefore && !heavySuspendedAt(saleDate)
+        ? '다주택 중과 — 경과규정(2026-05-09 이전 계약) 선택 적용으로 배제. 적용 가능 여부는 세무전문가 확인 필요'
+        : '다주택 중과 한시 배제(2026-05-09 양도분까지) — 기본세율·장기보유특별공제 적용');
+    }
+    if (Y === 2026 && saleM === 5 && saleDay == null && !stat.one && heavyAdj) {
+      yd.notes.push('2026년 5월 양도 — 중과 배제는 5월 9일 양도분까지입니다. 일 단위 날짜를 입력하면 정확히 판정합니다 (현재는 보수적으로 중과 적용)');
+    }
+    if (targetFlagged) yd.notes.push('양도 대상이 특례 표시 주택입니다 — 해당 주택 자신은 주택 수 제외 특례로 비과세를 받을 수 없어 일반 주택 수 기준으로 판정했습니다. 피상속인 보유기간 통산 등 세부 특례는 확인 필요');
+    if (otherSh > 0) yd.notes.push(`제3자 지분 ${Math.round(otherSh * 100)}%의 양도세는 합계에서 제외했습니다 (본인·배우자 귀속분만 표시)`);
 
-    cum += holdThis;
+    cum = Math.round(cum);
     rows.push({
       year: Y, hold: holdThis, cum, yangdo: yd, yangdoTotal: yd.total,
       grand: cum + yd.total, salePrice, holdY, liveY, before61
     });
   }
-  return { house: h, rows, before61, saleMonth: saleM };
+  return { house: h, rows, before61, saleMonth: saleM, saleDay };
 }
 
 /* =====================================================================
@@ -831,12 +908,13 @@ function giftFull(inp) {
     const holdY = h.acqDate ? (yearsBetween(h.acqDate, giftYM) || 0) : 0;
     const liveY = liveYearsOf(h.livePeriods, giftYM);
     const needLive = adjYes(h.adjAcq) && (!h.acqDate || h.acqDate >= '2017-08');
+    const giftSuspended = heavySuspendedAt(giftYM);
     giverYangdo = yangdoCore({
       year: giftYear, scen: 'current',
       sale: debt, acq: acqPortion, cost: 0,
       holdY, liveY,
       isOne: stat.one, needLive,
-      heavyCount: (!stat.one && adjYes(h.adjNow)) ? Math.min(3, houses.length + rc) : 0,
+      heavyCount: (!stat.one && adjYes(h.adjNow) && !giftSuspended) ? Math.min(3, houses.length + rc) : 0,
       fullPrice: fullValue,
       owners: [{ key: 'giver', share: 1, age: ((inp.people || {}).me || {}).age || 0 }],
       sameYearOther: false, seniorMove: false
@@ -1078,7 +1156,31 @@ function validateInput(inp) {
     const share = Math.max(0, Math.min(100, g.share || 0)) / 100;
     if (!(fullValue > 0) || !(share > 0)) errors.push({ code: 'GIFT_VALUE', msg: '증여 — 증여 지분과 평가액을 입력해 주세요.' });
     if (g.type === 'burden' && (g.debt || 0) * 억 > fullValue * share) errors.push({ code: 'GIFT_DEBT', msg: '증여 — 인수 채무가 증여가액보다 큽니다. 사실관계를 확인해 주세요.' });
+    // 이슈 6C: 증여 지분은 증여자(본인) 실제 보유 지분을 초과할 수 없다
+    if (h) {
+      const meShare = (+(h.shares || {}).me || 0);
+      if ((g.share || 0) > meShare + 0.01) errors.push({ code: 'GIFT_OVER', msg: `증여 — 증여 지분 ${g.share}%가 본인 보유 지분 ${meShare}%를 초과합니다.` });
+    }
     if (!g.value) estimates.push({ code: 'GIFT_EST', msg: '증여 — 평가액을 시세 환산값으로 추정했습니다. 실제로는 유사 매매사례가액 등 시가 평가가 우선합니다.' });
+  }
+  if (purposes.includes('joint')) {
+    const jh = houses.find(x => x.id === (inp.joint || {}).houseId) || houses[0];
+    if (jh) {
+      const meShare = (+(jh.shares || {}).me || 0);
+      if (((inp.joint || {}).share || 0) > meShare + 0.01) errors.push({ code: 'JOINT_OVER', msg: `공동명의 전환 — 이전 지분 ${(inp.joint || {}).share}%가 본인 보유 지분 ${meShare}%를 초과합니다.` });
+    }
+  }
+  if (purposes.includes('sell') && (inp.sell || {}).contractBefore) {
+    confirms.push({ code: 'HEAVY_GRANDF', msg: '매도 — 경과규정(2026-05-09 이전 계약) 선택을 적용해 중과를 배제했습니다. 실제 적용 가능 여부는 계약·계약금 수령 시점 증빙과 함께 세무전문가 확인이 필요합니다.' });
+  }
+  houses.forEach((h, i) => {
+    const nm = h.name || `주택 ${i + 1}`;
+    if (h.flags && h.flags.lowLocal && !lowLocalEligible(h)) confirms.push({ code: 'SPECIAL_INVALID', msg: `${nm} — 지방 저가주택 표시가 있으나 요건(수도권 외 + 공시 3억 이하) 미충족으로 적용하지 않았습니다.` });
+    if (h.flags && h.flags.popDecline && !popDeclineEligible(h)) confirms.push({ code: 'SPECIAL_INVALID', msg: `${nm} — 인구감소지역 표시가 있으나 요건(수도권 외 + 공시 4억 이하 잠정) 미충족으로 적용하지 않았습니다. 세부 요건은 확인이 필요합니다.` });
+    if (shareOf(h, 'other') > 0) confirms.push({ code: 'THIRD_PARTY', msg: `${nm} — 제3자 지분 ${Math.round(shareOf(h, 'other') * 100)}%: 종부세·양도세는 본인·배우자 귀속분만 계산하며, 재산세 표시는 물건 전체 기준입니다.` });
+  });
+  if (purposes.includes('acquire') && (inp.acquire || {}).first) {
+    confirms.push({ code: 'FIRST_HOME', msg: '생애최초 감면은 일반 한도 200만원으로 계산했습니다. 소형·인구감소지역 주택 등 일부 유형은 300만원 한도가 적용될 수 있으나 요건 확인이 필요해 자동 적용하지 않았습니다.' });
   }
   if ((inp.assumptions.marketGrowth || 0) !== 0 || (inp.assumptions.officialGrowth || 0) !== 0) {
     estimates.push({ code: 'GROWTH', msg: `가격 상승 가정 — 시세 연 ${inp.assumptions.marketGrowth || 0}% · 공시 연 ${inp.assumptions.officialGrowth || 0}%는 추정값입니다.` });
@@ -1200,6 +1302,7 @@ if (typeof module !== 'undefined' && module.exports) {
     acqBaseRate, acquisitionTax, giftAcquisitionTax, giftTaxCalc, giftFull,
     jointConvertAnalysis, thresholds, sensitivity, validateInput, confidenceGrade, conclusionOf,
     inheritExcludedAt, inheritForever, inheritExpiryYear, specialExcludedCount,
+    heavySuspendedAt, lowLocalEligible, popDeclineEligible,
     JR_NORMAL, JR_HEAVY, JR_2027, JR_2028, oneStatusOf
   };
 }
