@@ -13,12 +13,13 @@ const CONFIG = {
   BLOG_QNA_URL: 'https://blog.naver.com/marbin1982/224374566862', // 질문 허브 글 — 비우면 질문 CTA 자동 숨김
   YOUTUBE_CHANNEL: 'https://youtube.com/channel/UCAQphoJnr83PI1a8JUAlecQ?si=tIWvMYcCiA1r2iFD',
   YOUTUBE_FEATURE_URL: '', // 8·3 해설 영상 업로드 후 URL 입력 — 비어 있으면 영상 CTA 숨김
-  CASE_FORM_URL: '',       // '내 사례 남기기' Google Form URL — 비어 있으면 CTA 숨김 (docs/google-form-setup.md)
+  CASE_FORM_URL: 'https://docs.google.com/forms/d/e/1FAIpQLSfpULfPKYqwhMPWEYEuwWkCtd_r29XFx9tCutGoRcPd0bO9Lw/viewform', // '내 사례 남기기' Google Form (2026-08-13 연결)
   GA4_ID: ''               // GA4 측정 ID 입력 시에만 이벤트 전송 (이벤트명·유입경로만, 입력값은 전송하지 않음)
 };
 const VERSION = {
-  current: 'v3.0', updated: '2026-08-13',
+  current: 'v3.0.1', updated: '2026-08-13',
   log: [
+    ['v3.0.1', '2026-08-13', "'내 사례 남기기' Google Form 연결 — 사례 접수 CTA 활성화"],
     ['v3.0', '2026-08-13', '공식 문서 대조 전면 개정 — 매도연도 자유 입력, 미래 전입 연도별 판정, 26년 양도 중과 경과특례, 고령자 특례 요건 검증·한도 안분, 일시적2주택 처분기한 자동 해제, 지방특례 광역시 제외, 기본공제 잔여액 방식, 상속개시일 필수화 + 실제 PDF 저장·입력 자동복원 제거·심층분석 상태 보존·사례 접수 CTA'],
     ['v2.5', '2026-08-12', '전면 점검 — 다주택 중과 유예(~2026-05-09) 양도일 판정, 매도 누적 보유세 오류 수정, 재산세 과세표준상한 산식 교정(§110의2), 공동명의 납세의무자 합의 선택, 상속주택 단독 보유 판정 수정, 입력 검증 강화'],
     ['v2.4', '2026-08-11', '실사례 검증 반영 — 상속주택 특례 안내 정정·5년 만료 연도별 자동 반영(시행령 §4의2), 재산세 과세표준상한 표시, 공정시장가액비율 가정 고지·토글, 세액공제 분해 표시'],
