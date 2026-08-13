@@ -76,17 +76,36 @@ function yearsBetween(a, b) {
   if (!A || !B) return null;
   return Math.max(0, ymVal(B) - ymVal(A));
 }
-function liveYearsOf(periods, atStr) {
+/* 거주기간 정규화 — 시작일 정렬 후 중첩·연속 구간 병합 (2026-08-13 오류 4).
+   [{from,to}] → 병합된 [start,end] 숫자 구간 배열. atStr 이후는 잘라낸다.
+   종료일 < 시작일인 구간은 무시(입력 오류 — 검증 계층에서 별도 표시). */
+function normalizeLivePeriods(periods, atStr, fromStr) {
   const at = ym(atStr);
-  if (!at) return 0;
-  let sum = 0;
+  if (!at) return [];
+  const atV = ymVal(at);
+  const minV = fromStr && ym(fromStr) ? ymVal(ym(fromStr)) : -Infinity; // 취득일 이전 구간 보정
+  const segs = [];
   for (const p of (periods || [])) {
     const f = ym(p.from);
     if (!f) continue;
-    const t = p.to ? ym(p.to) : at;
-    const end = Math.min(ymVal(t), ymVal(at)), st = ymVal(f);
-    if (end > st) sum += end - st;
+    const tv = p.to ? (ym(p.to) ? ymVal(ym(p.to)) : atV) : atV;
+    let st = Math.max(ymVal(f), minV), en = Math.min(tv, atV);
+    if (!(en > st)) continue;   // 역전·0길이 구간 제외
+    segs.push([st, en]);
   }
+  segs.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const s of segs) {
+    const last = merged[merged.length - 1];
+    if (last && s[0] <= last[1]) last[1] = Math.max(last[1], s[1]); // 중첩·연속 병합(포함 구간도 흡수)
+    else merged.push([s[0], s[1]]);
+  }
+  return merged;
+}
+function liveYearsOf(periods, atStr, fromStr) {
+  const merged = normalizeLivePeriods(periods, atStr, fromStr);
+  let sum = 0;
+  for (const s of merged) sum += s[1] - s[0];
   return sum;
 }
 function liveNowOf(periods, asOf) {
@@ -494,7 +513,7 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
 
   const mainH = mainHouseOf(houses, asOf);
   const holdY = mainH && mainH.acqDate ? (yearsBetween(mainH.acqDate, asOf) || 0) : 0;
-  const liveY = mainH ? liveYearsOf(mainH.livePeriods, asOf) : 0;
+  const liveY = mainH ? liveYearsOf(mainH.livePeriods, asOf, mainH.acqDate) : 0;
   const oneLive = mainH ? liveNowOf(mainH.livePeriods, asOf) : false;
 
   const jong = { mode: 'per-taxpayer', persons: [], total: 0, joint: null, oneStatus: stat };
@@ -829,7 +848,7 @@ function sellSim(inp, scen) {
     }
 
     const holdY = h.acqDate ? (yearsBetween(h.acqDate, saleYM) || 0) : 0;
-    const liveY = liveYearsOf(h.livePeriods, saleYM);
+    const liveY = liveYearsOf(h.livePeriods, saleYM, h.acqDate);
     const salePrice = (s.price || 0) * 억 * Math.pow(1 + (inp.assumptions.marketGrowth || 0) / 100, Y - y0);
     const suspended = heavySuspendedAt(saleDate) || !!s.contractBefore;
 
@@ -1081,39 +1100,41 @@ function jointConvertAnalysis(inp) {
 function thresholds(inp) {
   const houses = activeHouses(inp);
   if (!houses.length) return null;
-  const stat = oneStatusOf(houses);
-  const thrAsOf = `${inp.assumptions.baseYear}-06`;
-  const mainH = mainHouseOf(houses, thrAsOf);
-  const oneLive = mainH ? liveNowOf(mainH.livePeriods, thrAsOf) : false;
   const pubNow = houses.reduce((s, h) => s + pubOf(h), 0);
 
+  /* 오류 3 (2026-08-13): 기준시점을 계산 연도별로 다시 잡는다.
+     2026년의 거주 상태를 2028년 개편안에 재사용하면 안 됨.
+     공동명의 1주택 실효 문턱 = max(인별 과세 문턱, 공동명의 특례 문턱)
+     — 납세자는 유리한 방식을 고를 수 있으므로 둘 중 큰 값에서 과세가 시작된다. */
   function thrFor(scen, year) {
     const P = jongParams(year, scen);
+    const asOf = `${year}-06`;
+    const stat = oneStatusOf(houses, 0, asOf);
+    const mainH = mainHouseOf(houses, asOf);
+    const oneLive = mainH ? liveNowOf(mainH.livePeriods, asOf) : false;
     const tps = ['me', 'spouse'].map(k => houses.filter(h => shareOf(h, k) > 0));
     const both = tps.every(list => list.length === houses.length && list.length > 0);
     if (stat.one && both) {
-      // 공동명의 1주택: 과세 시작 = max(개별납부 시작, 특례 시작)
-      const shares = ['me', 'spouse'].map(k => shareOf(houses[0], k));
-      const live = liveNowOf(houses[0].livePeriods, thrAsOf);
-      const indivStart = Math.min(...shares.filter(s => s > 0).map(s => P.dedMulti(live ? 1 : 0) / s));
+      const shares = ['me', 'spouse'].map(k => shareOf(houses[0], k)).filter(s => s > 0);
+      const live = liveNowOf(houses[0].livePeriods, asOf);
+      const indivStart = Math.min.apply(null, shares.map(s => P.dedMulti(live ? 1 : 0) / s));
       const specialStart = P.dedOne(live);
       return Math.max(indivStart, specialStart);
     }
     if (stat.one) return P.dedOne(oneLive);
-    // 다주택: 본인 지분 기준 근사 — 합계가 인별 공제 합을 넘는 시점
     let sum = 0;
     for (const k of ['me', 'spouse']) {
       const list = houses.filter(h => shareOf(h, k) > 0);
       if (!list.length) continue;
-      const ls = (() => {
-        const ps = list.reduce((s, h) => s + pubOf(h) * shareOf(h, k), 0);
-        const lv = list.filter(h => liveNowOf(h.livePeriods, thrAsOf)).reduce((s, h) => s + pubOf(h) * shareOf(h, k), 0);
-        return ps > 0 ? lv / ps : 0;
-      })();
-      sum += P.dedMulti(ls);
+      const ps = list.reduce((s, h) => s + pubOf(h) * shareOf(h, k), 0);
+      const lv = list.filter(h => liveNowOf(h.livePeriods, asOf)).reduce((s, h) => s + pubOf(h) * shareOf(h, k), 0);
+      sum += P.dedMulti(ps > 0 ? lv / ps : 0);
     }
     return sum || P.dedMulti(0);
   }
+  const stat = oneStatusOf(houses, 0, `${inp.assumptions.baseYear}-06`);
+  const mainH0 = mainHouseOf(houses, `${inp.assumptions.baseYear}-06`);
+  const oneLive = mainH0 ? liveNowOf(mainH0.livePeriods, `${inp.assumptions.baseYear}-06`) : false;
 
   const cur = thrFor('current', inp.assumptions.baseYear);
   const ref = thrFor('reform', inp.assumptions.baseYear + 2);
@@ -1125,7 +1146,8 @@ function thresholds(inp) {
       g, years: pubNow > 0 && t > pubNow ? Math.log(t / pubNow) / Math.log(1 + g) : 0
     }))
   });
-  return { pubNow, current: mk(cur), reform: mk(ref), oneStatus: stat, oneLive };
+  const jointOne = stat.one && ['me', 'spouse'].every(k => houses.filter(h => shareOf(h, k) > 0).length === houses.length);
+  return { pubNow, current: mk(cur), reform: mk(ref), oneStatus: stat, oneLive, jointOne };
 }
 
 /** 공시가격 ±5% 민감도 — 기준·하향·상향 3개 시나리오 */
@@ -1398,7 +1420,7 @@ if (typeof module !== 'undefined' && module.exports) {
     acqBaseRate, acquisitionTax, giftAcquisitionTax, giftTaxCalc, giftFull,
     jointConvertAnalysis, thresholds, sensitivity, validateInput, confidenceGrade, conclusionOf,
     inheritExcludedAt, inheritForever, inheritExpiryYear, specialExcludedCount,
-    heavySuspendedAt, lowLocalEligible, popDeclineEligible, nonMetroEligible,
+    heavySuspendedAt, lowLocalEligible, popDeclineEligible, nonMetroEligible, normalizeLivePeriods,
     temp2Deadline, temp2ActiveAt, futureMoveIn,
     JR_NORMAL, JR_HEAVY, JR_2027, JR_2028, oneStatusOf
   };

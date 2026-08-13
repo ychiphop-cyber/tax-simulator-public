@@ -17,8 +17,9 @@ const CONFIG = {
   GA4_ID: ''               // GA4 측정 ID 입력 시에만 이벤트 전송 (이벤트명·유입경로만, 입력값은 전송하지 않음)
 };
 const VERSION = {
-  current: 'v3.0.3', updated: '2026-08-13',
+  current: 'v3.0.4', updated: '2026-08-13',
   log: [
+    ['v3.0.4', '2026-08-13', '긴급 수정 — 비거주 결과 크래시(futureFrom), 미래 입주 예정 상태 구분, 연도별 실효 문턱(공동명의 max), 중첩 거주기간 병합, PDF 페이지 분할·속도 개선'],
     ['v3.0.3', '2026-08-13', '결과 하단 재배치(PDF 저장 → 내 사례 → 유튜브 → 오류·개선 → 근거와 한계) 및 문구 개선'],
     ['v3.0.2', '2026-08-13', '페이지 끝 중복 사례 CTA 제거 (본 블록만 유지)'],
     ['v3.0.1', '2026-08-13', "'내 사례 남기기' Google Form 연결 — 사례 접수 CTA 활성화"],
@@ -117,6 +118,7 @@ function numInp() {
     const periods = [];
     for (const p of (h.pastPeriods || [])) if (p.from && p.to) periods.push({ from: p.from, to: p.to });
     if (h.liveMode === 'now') periods.push({ from: h.liveFrom || h.acqDate || (inp.assumptions.baseYear - 10) + '-01', to: '' });
+    if (h.liveMode === 'future' && h.liveFrom) periods.push({ from: h.liveFrom, to: '' }); // 미래 전입 — 연도별 판정은 엔진이 처리
     return Object.assign({}, h, {
       name: h.name || `주택 ${i + 1}`,
       official: num(h.official), market: num(h.market),
@@ -143,7 +145,14 @@ function uiConfirms(inp) {
   const out = [];
   S.inp.houses.forEach((h, i) => {
     const nm = h.name || `주택 ${i + 1}`;
+    const nowYM = RULES.reviewedAt.slice(0, 7);
     if (h.liveMode === 'now' && !h.liveFrom) out.push({ code: 'LIVE_FROM', msg: `${nm} — 전입 시기 미입력. 취득일부터 거주한 것으로 가정했습니다.` });
+    if (h.liveMode === 'now' && h.liveFrom && h.liveFrom > nowYM) out.push({ code: 'LIVE_FUTURE', msg: `${nm} — '현재 거주 중'인데 전입 시기가 미래(${h.liveFrom})입니다. '미래 입주 예정'으로 선택해 주세요.` });
+    if (h.liveMode === 'future' && !h.liveFrom) out.push({ code: 'MOVEIN_MISSING', msg: `${nm} — 미래 입주 예정을 선택했으나 입주 예정 연월이 없어 비거주로 계산했습니다.` });
+    if (h.liveMode === 'future' && h.liveFrom && h.liveFrom <= nowYM) out.push({ code: 'MOVEIN_PAST', msg: `${nm} — 입주 예정일(${h.liveFrom})이 현재보다 과거입니다. '현재 거주 중'으로 선택해 주세요.` });
+    (h.pastPeriods || []).forEach(pp => {
+      if (pp.from && pp.to && pp.to < pp.from) out.push({ code: 'LIVE_RANGE', msg: `${nm} — 과거 거주기간의 종료일(${pp.to})이 시작일(${pp.from})보다 빠릅니다. 이 구간은 계산에서 제외했습니다.` });
+    });
   });
   if (S.inp.purposes.includes('joint')) {
     const h = S.inp.houses.find(x => x.id === S.inp.joint.houseId) || S.inp.houses[0];
@@ -194,7 +203,7 @@ function seedHouses(sit) {
     while (hs.length > want) hs.pop();
   }
   if (sit === 'one_live') { hs[0].liveMode = 'now'; }
-  if (sit === 'one_away') { hs[0].liveMode = 'none'; }
+  if (sit === 'one_away') { if (hs[0].liveMode !== 'future' && hs[0].liveMode !== 'past') hs[0].liveMode = 'none'; }
   if (sit === 'two' || sit === 'multi') { if (hs[0].liveMode === 'none') hs[0].liveMode = 'now'; }
 }
 function renderStep1() {
@@ -320,12 +329,19 @@ function renderStep3() {
         <div>
           <label class="mini">거주</label>
           <div class="seg sm" style="margin-top:4px">
-            ${[['now', '현재 거주'], ['past', '과거 거주'], ['none', '거주 안 함']].map(([v, l]) => `<button type="button" data-h="${i}" data-live="${v}" aria-pressed="${h.liveMode === v}">${l}</button>`).join('')}
+            ${[['now', '현재 거주 중'], ['none', '현재 비거주'], ['future', '미래 입주 예정'], ['past', '과거 거주 후 비거주']].map(([v, l]) => `<button type="button" data-h="${i}" data-live="${v}" aria-pressed="${h.liveMode === v}">${l}</button>`).join('')}
           </div>
         </div>
         ${h.liveMode === 'now' ? `<div class="full">
           <label class="mini">전입 시기 (이 집에 살기 시작한 때)</label>
-          <input type="month" data-h="${i}" data-k="liveFrom" value="${esc(h.liveFrom)}">
+          <input type="month" data-h="${i}" data-k="liveFrom" value="${esc(h.liveFrom)}" max="${RULES.reviewedAt.slice(0, 7)}">
+          ${h.liveFrom && h.liveFrom > RULES.reviewedAt.slice(0, 7) ? '<p class="subtle" style="color:var(--accent);font-weight:700">전입 시기가 미래입니다 — \'미래 입주 예정\'을 선택하세요.</p>' : ''}
+        </div>` : ''}
+        ${h.liveMode === 'future' ? `<div class="full">
+          <label class="mini">입주 예정 연월 <b style="color:var(--accent)">*</b></label>
+          <input type="month" data-h="${i}" data-k="liveFrom" value="${esc(h.liveFrom)}" min="${RULES.reviewedAt.slice(0, 7)}">
+          ${!h.liveFrom ? '<p class="subtle" style="color:var(--accent);font-weight:700">입주 예정 연월을 입력해 주세요.</p>'
+        : (h.liveFrom <= RULES.reviewedAt.slice(0, 7) ? '<p class="subtle" style="color:var(--accent);font-weight:700">입주 예정일이 현재(기준월)보다 과거입니다 — \'현재 거주 중\'을 선택하세요.</p>' : '<p class="subtle">그 전 연도는 비거주로 계산합니다.</p>')}
         </div>` : ''}
         ${h.liveMode !== 'none' ? `<div class="full">
           <label class="mini">과거 거주 기간 (있다면 — 입주 ~ 전출)</label>
@@ -430,11 +446,15 @@ function renderStep6() {
     const flags = Object.entries({ temp2: '일시적2주택', inherit: '상속', lowLocal: '지방저가', rental: '등록임대', popDecline: '인구감소' })
       .filter(([k]) => h.flags[k]).map(([, v]) => v).join('·');
     const nowYM = RULES.reviewedAt.slice(0, 7);
-    const liveTxt = h.liveMode === 'now'
-      ? (h.liveFrom && h.liveFrom > nowYM
-        ? `<b>${+h.liveFrom.slice(0, 4)}년 ${+h.liveFrom.slice(5, 7)}월부터 실거주 예정</b> (현재 비거주)`
-        : `거주 중${h.liveFrom ? ` · ${+h.liveFrom.slice(0, 4)}년 ${+h.liveFrom.slice(5, 7)}월부터` : ' (전입 시기 미입력)'}`)
-      : h.liveMode === 'past' ? '과거 거주' : '현재 비거주';
+    const liveTxt = (function () {
+      const fmt = v => `${+v.slice(0, 4)}년 ${+v.slice(5, 7)}월`;
+      if (h.liveMode === 'future') return h.liveFrom ? `현재 비거주 / <b>${fmt(h.liveFrom)}부터 실거주 예정</b>` : '현재 비거주 / <b style="color:var(--accent)">입주 예정일 미입력</b>';
+      if (h.liveMode === 'now') return h.liveFrom && h.liveFrom > nowYM
+        ? `현재 비거주 / <b>${fmt(h.liveFrom)}부터 실거주 예정</b>`
+        : `거주 중${h.liveFrom ? ` · ${fmt(h.liveFrom)}부터` : ' (전입 시기 미입력)'}`;
+      if (h.liveMode === 'past') return '과거 거주 후 현재 비거주';
+      return '현재 비거주';
+    })();
     const shareTxt = h.ownerType === 'me' ? '본인 100%' : h.ownerType === 'spouse' ? '배우자 100%'
       : `본인 ${h.shares.me}% · 배우자 ${h.shares.spouse}%${h.shares.other ? ` · 제3자 ${h.shares.other}%` : ''}`;
     return `<div class="sumcard"><div class="shead"><b>${i + 1}. ${esc(h.name)}</b><button class="iconb" data-goto="2">수정</button></div>
@@ -827,10 +847,10 @@ function thresholdHTML(c) {
     </table></div>
     <p class="subtle">공시가격이 매년 같은 비율로 오른다는 단순 가정입니다. 실제 고시가격·정책 변경에 따라 달라집니다.</p>` : '';
   return `<div class="card">
-    <h2>언제 달라지나 — 과세 전환점</h2>
-    <p class="hint">현재 공시가격 합계 <b>${eok(pubNow)}</b> 기준, 종부세 과세가 시작되는 지점입니다.${t.oneStatus.one && c.inp.houses.length === 1 && Object.values(c.inp.houses[0].shares).filter(v => v > 0).length > 1 ? ' 부부 공동명의는 개별납부·특례 중 유리한 쪽 기준의 실효 문턱입니다.' : ''}</p>
+    <h2>언제 달라지나 — 과세 전환점${t.jointOne ? ' <span class="stat info">유리한 납부방식 기준 실효 문턱</span>' : ''}</h2>
+    <p class="hint">현재 공시가격 합계 <b>${eok(pubNow)}</b> 기준, 종부세 과세가 시작되는 지점입니다.${t.jointOne ? ' 부부 공동명의 1주택은 인별 과세와 공동명의 특례 중 <b>유리한 방식</b>을 고를 수 있어, 둘 중 늦게 시작되는 쪽이 실효 문턱입니다.' : ''}${t.oneStatus.one && c.inp.houses.length === 1 && Object.values(c.inp.houses[0].shares).filter(v => v > 0).length > 1 ? ' 부부 공동명의는 개별납부·특례 중 유리한 쪽 기준의 실효 문턱입니다.' : ''}</p>
     <div class="tblwrap"><table>
-      <thead><tr><th>기준</th><th>공시가격 문턱</th><th>시세 환산(÷69%)</th><th>현재 대비</th></tr></thead>
+      <thead><tr><th>기준</th><th>${t.jointOne ? '실효 문턱(유리한 방식)' : '공시가격 문턱'}</th><th>시세 환산(÷69%)</th><th>현재 대비</th></tr></thead>
       <tbody>
         ${mkRow('현행', scenBadge('current'), t.current)}
         ${mkRow('정부안', scenBadge('reform'), t.reform)}
@@ -858,9 +878,13 @@ function sensHTML(c) {
 function opinionHTML(c) {
   const inp = c.inp;
   const houses = inp.houses;
-  const stat = oneStatusOf(houses, 0, `${inp.assumptions.baseYear}-06`); // 기준연도 과세기준일 기준 판정
-  const mainH = houses.find(h => liveNowOf(h.livePeriods)) || houses[0];
-  const live = mainH && liveNowOf(mainH.livePeriods);
+  // 2026-08-13 오류 1·2: 기준시점 명시 + futureFrom 선언 (미선언 시 ReferenceError로 결과 화면 크래시)
+  const opAsOf = `${inp.assumptions.baseYear}-06`;
+  const stat = oneStatusOf(houses, 0, opAsOf);
+  const mainH = mainHouseOf(houses, opAsOf) || null;
+  const live = !!(mainH && liveNowOf(mainH.livePeriods, opAsOf));
+  const futureFrom = mainH ? futureMoveIn(mainH.livePeriods, opAsOf) : null;
+  const pastLived = !!(mainH && !live && liveYearsOf(mainH.livePeriods, opAsOf, mainH.acqDate) > 0);
   const pubNow = houses.reduce((s, h) => s + pubOf(h), 0);
   const r26 = c.cur[0], c28 = c.cur[2], r28 = c.ref[2];
   const anyJoint = houses.some(h => shareOf(h, 'me') > 0 && shareOf(h, 'spouse') > 0);
@@ -869,7 +893,13 @@ function opinionHTML(c) {
   const estMark = houses.some(pubEstimated) ? ' (일부 추정)' : '';
   const facts = `세대 기준 <b>${houses.length}주택</b>${stat.excluded > 0 ? ` (특례 제외 후 실질 ${houses.length - stat.excluded}주택)` : ''}${stat.temp2 ? ' (일시적 2주택 표시)' : ''}, ` +
     `명의 ${anyJoint ? '부부 공동 포함' : '단독'}, 공시가격 합계 <b>${eok(pubNow)}</b>${estMark}, ` +
-    `${live ? `본인 세대가 ${esc(mainH.name || '주요 주택')}에 거주 중` : (futureFrom ? `현재 비거주 · ${+futureFrom.slice(0, 4)}년 ${+futureFrom.slice(5, 7)}월부터 실거주 예정` : '보유 주택에 거주하지 않음')}, ` +
+    `${(function () {
+      const nm = esc((mainH && mainH.name) || '주요 주택');
+      if (live) return `본인 세대가 ${nm}에 거주 중`;
+      if (futureFrom) return `현재 비거주 · ${+futureFrom.slice(0, 4)}년 ${+futureFrom.slice(5, 7)}월부터 ${nm}에 실거주 예정`;
+      if (pastLived) return `과거 ${nm}에 거주했고 현재는 비거주`;
+      return '보유 주택에 거주하지 않음(비거주)';
+    })()}, ` +
     `본인 ${inp.people.me.age}세` +
     `${mainH && mainH.acqDate ? `, 주요 주택 취득 ${mainH.acqDate} (보유 ${Math.floor(r26.holdY)}년차, 거주 ${Math.floor(r26.liveY)}년)` : ''}.`;
 
@@ -1228,86 +1258,109 @@ function basisHTML(c) {
 const PDF_LIGHT_VARS = ['--surface:#ffffff', '--page:#ffffff', '--raised:#f4f2ee', '--ink:#12100f', '--ink2:#56534e', '--muted:#8a867e', '--grid:#eae7e0', '--axis:#d6d2c9', '--line:rgba(18,16,15,.15)', '--s1:#A8252C', '--s2:#3d7ab8', '--s3:#c98500', '--s4:#4a3aa7', '--up:#A8252C', '--down:#006300', '--ok:#006300', '--warn2:#c98500', '--accent:#A8252C', '--accent-soft:#fbf1f1', '--ok-soft:#eef6ee', '--warn-soft:#fdf6e9', '--info-soft:#eff4fa', '--r:14px'];
 async function generatePdf() {
   const btn = $('#btnPrint');
-  if (!btn || btn.dataset.busy) return; // 중복 클릭 방지
+  if (!btn || btn.disabled) return;                 // 중복 클릭 방지
   const live = $('#pdfStatus');
   const orig = btn.textContent;
-  btn.dataset.busy = '1';
-  btn.textContent = 'PDF 생성 중…';
+  const scrollY0 = window.scrollY;                  // 저장 후 화면 상태 복원용
+  const insightWasOpen = !!(S.ui && S.ui.insightOpen);
+  const t0 = Date.now();
+  const setStatus = msg => { btn.textContent = msg; if (live) live.textContent = msg; };
+  btn.disabled = true;
   btn.setAttribute('aria-busy', 'true');
-  if (live) live.textContent = 'PDF를 생성하고 있습니다';
+  setStatus('PDF 생성 중… 결과 구성 중');
+  let holder = null;
   try {
     if (typeof html2canvas !== 'function' || !window.jspdf) throw new Error('PDF 라이브러리를 불러오지 못했습니다');
-    await document.fonts.ready; // 웹폰트 로딩 완료 대기
-    await new Promise(r => setTimeout(r, 50));
+    await document.fonts.ready;
+    await new Promise(r => setTimeout(r, 30));
 
-    // 복제 DOM — 원본 화면 상태(펼침·스크롤)는 변경하지 않는다
+    // 복제 DOM — 원본 화면(펼침·스크롤)은 손대지 않는다
     const clone = $('#report').cloneNode(true);
+    clone.id = 'pdfClone';                           // 원본 #report와 id 충돌 방지
     const iw = clone.querySelector('#insightWrap');
-    if (iw) iw.hidden = false; // 닫혀 있어도 PDF에는 심층분석 포함
-    clone.querySelectorAll('.no-print, .cta, .expandcard, button, .seg, input, select').forEach(e => e.remove());
+    if (iw) { iw.hidden = false; iw.id = 'pdfInsight'; } // 닫혀 있어도 PDF에는 포함
+    // 결과와 무관한 UI 제거: 버튼·CTA·내비·입력 + 업데이트 내역(details.acc)
+    clone.querySelectorAll('.no-print, .cta, .expandcard, button, .seg, input, select, .ytlink, details').forEach(e => e.remove());
     const head = document.createElement('div');
-    head.style.cssText = 'padding:0 0 12px';
     const now = new Date();
-    head.innerHTML = '<div style="font-size:20px;font-weight:700;letter-spacing:-.02em">닥터마빈의 부동산 세금 시뮬레이터 — 결과 보고서</div>' +
-      `<div style="font-size:11px;color:#6b6b6b;margin-top:4px">생성일시 ${now.toLocaleString('ko-KR')} · 기준일 ${RULES.reviewedAt} · ${VERSION.current} · 참고용 계산 결과이며 세무 자문이 아닙니다</div>`;
+    head.style.cssText = 'padding:0 0 10px';
+    head.innerHTML = '<div style="font-size:19px;font-weight:700;letter-spacing:-.02em">닥터마빈의 부동산 세금 시뮬레이터 — 결과 보고서</div>' +
+      `<div style="font-size:10.5px;color:#6b6b6b;margin-top:3px">생성일시 ${now.toLocaleString('ko-KR')} · 기준일 ${RULES.reviewedAt} · 참고용 계산 결과이며 세무 자문이 아닙니다</div>`;
     clone.insertBefore(head, clone.firstChild);
 
-    const holder = document.createElement('div');
-    holder.style.cssText = 'position:fixed;left:-12000px;top:0;width:794px;background:#ffffff;color:#12100f;padding:28px;z-index:-1';
+    holder = document.createElement('div');
+    holder.style.cssText = 'position:fixed;left:-12000px;top:0;width:760px;background:#ffffff;color:#12100f;padding:0;z-index:-1';
     PDF_LIGHT_VARS.forEach(kv => { const c = kv.indexOf(':'); holder.style.setProperty(kv.slice(0, c), kv.slice(c + 1)); });
     holder.appendChild(clone);
     document.body.appendChild(holder);
-    // 차트·레이아웃 렌더 대기 — rAF는 백그라운드 탭에서 실행되지 않으므로 setTimeout 사용
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise(r => setTimeout(r, 120));      // 레이아웃·차트 렌더 대기
 
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF({ unit: 'pt', format: 'a4', compress: true });
     const pageW = pdf.internal.pageSize.getWidth(), pageH = pdf.internal.pageSize.getHeight();
-    const margin = 28, maxW = pageW - margin * 2, maxH = pageH - margin * 2;
+    const margin = 30, maxW = pageW - margin * 2, maxH = pageH - margin * 2 - 14;
 
-    // 성능: html2canvas는 호출마다 문서 전체를 복제하므로 '한 번만' 렌더한 뒤
-    // 섹션 경계(offsetTop)를 기준으로 페이지를 자른다 (카드 중간 잘림 최소화).
-    const canvas = await html2canvas(clone, { scale: 1.5, backgroundColor: '#ffffff', logging: false, windowWidth: 794 });
-    const pxRatio = canvas.width / clone.offsetWidth;               // DOM px → canvas px
-    const ptRatio = maxW / canvas.width;                            // canvas px → pdf pt
-    const pageCanvasH = Math.floor(maxH / ptRatio);                 // 한 페이지에 담기는 canvas 높이
+    // 성능: html2canvas는 호출마다 문서 전체를 복제하므로 '한 번만' 캡처하고,
+    // 섹션(카드) 경계에서만 페이지를 잘라 카드·표 중간 잘림을 막는다.
+    setStatus('PDF 생성 중… 결과 캡처');
+    const canvas = await html2canvas(clone, { scale: 1.2, backgroundColor: '#ffffff', logging: false, windowWidth: 760 });
+    const pxRatio = canvas.width / clone.offsetWidth;   // DOM px → canvas px
+    const ptRatio = maxW / canvas.width;                // canvas px → pdf pt
+    const pageCanvasH = Math.floor(maxH / ptRatio);
     const cuts = [].slice.call(clone.children)
-      .map(el => Math.round((el.offsetTop + el.offsetHeight) * pxRatio))
-      .filter(v => v > 0 && v < canvas.height).sort((x, y2) => x - y2);
-    let sy = 0;
-    while (sy < canvas.height - 2) {
+      .map(el => Math.round((el.offsetTop + el.offsetHeight + 6) * pxRatio))
+      .filter(v => v > 0 && v < canvas.height)
+      .sort((x, y2) => x - y2);
+    const MIN_TAIL = Math.round(40 * pxRatio);          // 이보다 작은 잔여는 빈 페이지로 보고 버림
+    let sy = 0, page = 0;
+    while (sy < canvas.height - MIN_TAIL) {
       const hardEnd = Math.min(sy + pageCanvasH, canvas.height);
-      // 섹션 경계 중 페이지 한도 안의 마지막 지점에서 자름 (없으면 강제 절단)
       let end = hardEnd;
       if (hardEnd < canvas.height) {
-        const fit = cuts.filter(c => c > sy + pageCanvasH * 0.35 && c <= hardEnd);
-        if (fit.length) end = fit[fit.length - 1];
+        const fit = cuts.filter(c => c > sy + pageCanvasH * 0.3 && c <= hardEnd);
+        if (fit.length) end = fit[fit.length - 1];      // 페이지에 들어가는 마지막 카드 경계
       }
       const h = end - sy;
+      setStatus(`PDF 생성 중… 페이지 생성 (${page + 1})`);
       const c2 = document.createElement('canvas');
       c2.width = canvas.width; c2.height = h;
       c2.getContext('2d').drawImage(canvas, 0, sy, canvas.width, h, 0, 0, canvas.width, h);
-      if (sy > 0) pdf.addPage();
-      pdf.addImage(c2.toDataURL('image/jpeg', 0.87), 'JPEG', margin, margin, maxW, h * ptRatio);
-      sy = end;
+      if (page > 0) pdf.addPage();
+      pdf.addImage(c2.toDataURL('image/jpeg', 0.82), 'JPEG', margin, margin, maxW, h * ptRatio);
+      sy = end; page++;
+      await new Promise(r => setTimeout(r, 0));         // UI 양보
     }
-    document.body.removeChild(holder);
+    const total = pdf.getNumberOfPages();
+    for (let pg = 1; pg <= total; pg++) {
+      pdf.setPage(pg);
+      pdf.setFontSize(9); pdf.setTextColor(120);
+      pdf.text(`${pg} / ${total}`, pageW / 2, pageH - 16, { align: 'center' });
+    }
+
+    setStatus('PDF 저장 중…');
     const ds = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const filename = `닥터마빈_부동산세금_시뮬레이션_${ds}.pdf`;
+    const took = Math.round((Date.now() - t0) / 100) / 10;
     if (typeof window.__pdfTestHook === 'function') {
-      window.__pdfTestHook({ blob: pdf.output('blob'), filename, pages: pdf.getNumberOfPages() });
+      window.__pdfTestHook({ blob: pdf.output('blob'), filename, pages: total, seconds: took });
     } else {
       pdf.save(filename);
     }
     track('pdf_save', false);
-    if (live) live.textContent = 'PDF 저장이 완료되었습니다';
+    if (live) live.textContent = `PDF 저장이 완료되었습니다 (${total}페이지, ${took}초)`;
   } catch (err) {
     if (live) live.textContent = 'PDF 생성에 실패했습니다';
-    alert('PDF 생성에 실패했습니다: ' + (err && err.message ? err.message : err) + '\n잠시 후 다시 시도해 주세요. 문제가 계속되면 브라우저를 최신 버전으로 업데이트해 주세요.');
+    alert('PDF 생성에 실패했습니다: ' + (err && err.message ? err.message : err) + '\n잠시 후 다시 시도해 주세요.');
   } finally {
-    delete btn.dataset.busy;
+    if (holder && holder.parentNode) holder.parentNode.removeChild(holder);
+    btn.disabled = false;
     btn.textContent = orig;
     btn.removeAttribute('aria-busy');
+    // 화면 상태 복원 (스크롤·펼침)
+    if (S.ui) S.ui.insightOpen = insightWasOpen;
+    const iw2 = $('#insightWrap');
+    if (iw2) iw2.hidden = !insightWasOpen;
+    window.scrollTo(0, scrollY0);
   }
 }
 
