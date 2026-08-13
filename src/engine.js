@@ -89,7 +89,23 @@ function liveYearsOf(periods, atStr) {
   }
   return sum;
 }
-function liveNowOf(periods) { return (periods || []).some(p => ym(p.from) && !p.to); }
+function liveNowOf(periods, asOf) {
+  // 오류 2: 열린 거주 구간이라도 전입일이 판정 시점(asOf) 이후면 '아직 비거주'다.
+  return (periods || []).some(p => {
+    const f = ym(p.from);
+    if (!f || p.to) return false;
+    if (!asOf) return true;                 // 시점 미지정 호출은 기존 의미 유지
+    const a = ym(asOf);
+    return a ? ymVal(f) <= ymVal(a) : true;
+  });
+}
+function futureMoveIn(periods, asOf) {      // 향후 실거주 예정 여부·시작월
+  for (const p of (periods || [])) {
+    const f = ym(p.from);
+    if (f && !p.to && asOf && ymVal(f) > ymVal(ym(asOf))) return p.from;
+  }
+  return null;
+}
 
 /* 포맷 */
 function won(v) {
@@ -334,21 +350,29 @@ function inheritForever(h) {
 function inheritExcludedAt(h, asOf) {
   if (!(h.flags && h.flags.inherit)) return false;
   if (inheritForever(h)) return true;
+  if (!h.acqDate) return false;              // 오류 8: 상속개시일 미입력 → 특례 미적용(자동 유리 적용 금지)
   if (!asOf) return true;                    // 시점 미지정 경로(양도·증여 등)는 기존 동작 유지
-  if (!h.acqDate) return true;               // 상속개시일 미입력 — 판정 불가, 제외 유지(확인 문구 별도)
   const yrs = yearsBetween(h.acqDate, asOf);
   return yrs !== null && yrs < 5;
 }
 /* 이슈 6A: 지방 저가·인구감소 특례는 법정 요건(소재지·공시가격) 충족 시에만 반영.
    지방 저가주택: 수도권(서울·경기·인천) 밖 + 공시 3억 이하 (종부세법 §8④3, 시행령 §4의2).
    인구감소지역: 수도권 밖 + 공시 4억 이하로 잠정 적용 — 세부 요건(지정지역 목록·취득시기)은 확인 필요. */
+/* 오류 6 (상세본 p70-71): 적용 지역은 '비수도권(광역시 제외)'이 원칙 — 광역시 주택은 부적격
+   (광역시 내 군지역 예외는 시·군·구 입력이 없어 자동 판정 미지원 → 별도 안내).
+   인구감소·관심지역 가액 상한은 유형별 9억/6억/4억 — 지역 유형 입력이 없어
+   가장 보수적인 4억(일반 비수도권 기준)만 자동 인정. 주택 수 제외 특례는 '26.1.1. 이후 취득분. */
+function nonMetroEligible(h) {
+  const r = String(h.region || '');
+  const metro = METRO_REGIONS.some(m => r.indexOf(m) === 0);
+  const gwangyeok = r.indexOf('부산') === 0; // '부산·대구 등 광역시' 선택지
+  return !metro && !gwangyeok;
+}
 function lowLocalEligible(h) {
-  const metro = METRO_REGIONS.some(r => String(h.region || '').indexOf(r) === 0);
-  return !metro && pubOf(h) <= 3 * 억;
+  return nonMetroEligible(h) && pubOf(h) <= 3 * 억;
 }
 function popDeclineEligible(h) {
-  const metro = METRO_REGIONS.some(r => String(h.region || '').indexOf(r) === 0);
-  return !metro && pubOf(h) <= 4 * 억;
+  return nonMetroEligible(h) && pubOf(h) <= 4 * 억 && !!h.acqDate && h.acqDate >= '2026-01';
 }
 function specialExcludedCount(houses, asOf = null) {
   return houses.filter(h => h.flags && (
@@ -356,6 +380,25 @@ function specialExcludedCount(houses, asOf = null) {
     (h.flags.lowLocal && lowLocalEligible(h)) ||
     (h.flags.popDecline && popDeclineEligible(h))
   )).length;
+}
+/* 오류 5 (상세본 p73-74): 일시적 2주택 처분기한 — 신규주택 취득일부터 현행 3년,
+   조정대상지역 내(종전·신규 모두 조정) 2년으로 단축. 경과조치: '26.8.3. 이전 취득
+   또는 계약+계약금 지급분은 종전 3년. 기한 경과 시 특례 자동 해제. */
+function temp2Deadline(houses) {
+  const flagged = houses.filter(h => h.flags && h.flags.temp2);
+  if (houses.length !== 2 || !flagged.length) return null;
+  const newer = houses.slice().sort((a, b) => (b.acqDate || '') > (a.acqDate || '') ? 1 : -1)[0];
+  if (!newer || !newer.acqDate) return { unknown: true };
+  const bothAdj = houses.every(h => adjYes(h.adjNow));
+  const years = (bothAdj && newer.acqDate > '2026-08-03') ? 2 : 3;
+  const d = ym(newer.acqDate);
+  return { from: newer.acqDate, years, until: `${d.y + years}-${String(d.m).padStart(2, '0')}` };
+}
+function temp2ActiveAt(houses, asOf) {
+  const dl = temp2Deadline(houses);
+  if (!dl) return false;
+  if (dl.unknown || !asOf) return true; // 날짜 미상·시점 미지정 → 유지(확인 문구 별도)
+  return ymVal(ym(asOf)) <= ymVal(ym(dl.until));
 }
 function oneStatusOf(houses, rightsCount = 0, asOf = null) {
   // 이슈 5: 주택 수 제외 특례(§8④)는 '다른 주택과 함께 보유'를 전제로 한다.
@@ -365,7 +408,7 @@ function oneStatusOf(houses, rightsCount = 0, asOf = null) {
   const netHouses = houses.length - excl;           // 실질 주택수
   const netTotal = netHouses + rightsCount;         // 실질 + 권리
   if (netTotal === 1 && netHouses === 1) return { one: true, temp2: false, effCount: houses.length + rightsCount, excluded: excl };
-  if (netTotal === 2 && netHouses === 2 && houses.some(h => h.flags && h.flags.temp2))
+  if (netTotal === 2 && netHouses === 2 && temp2ActiveAt(houses, asOf))
     return { one: true, temp2: true, effCount: houses.length + rightsCount, excluded: excl };
   return { one: false, temp2: false, effCount: houses.length + rightsCount, excluded: excl };
 }
@@ -388,8 +431,8 @@ function rightsCountOf(inp) {
   const r = inp && inp.rights ? inp.rights : {};
   return (r.presale ? 1 : 0) + (r.occupancy ? 1 : 0);
 }
-function mainHouseOf(houses) { // 거주 중인 주택 우선, 없으면 첫 번째
-  return houses.find(h => liveNowOf(h.livePeriods)) || houses[0];
+function mainHouseOf(houses, asOf) { // 거주 중인 주택 우선, 없으면 첫 번째
+  return houses.find(h => liveNowOf(h.livePeriods, asOf)) || houses[0];
 }
 function adjYes(v) { return v === 'yes' || v === 'unknown'; } // 미확인은 보수적으로 예 취급(플래그 별도)
 
@@ -427,7 +470,7 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
         h: r.h, share: shareOf(r.h, key),
         pubShare: r.pub * shareOf(r.h, key),
         fair: r.pt.fair, mainShare: r.pt.main * shareOf(r.h, key),
-        liveNow: liveNowOf(r.h.livePeriods),
+        liveNow: liveNowOf(r.h.livePeriods, asOf),
         adj: adjYes(r.h.adjNow)
       }));
     if (!ent.length) continue;
@@ -449,10 +492,10 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
     });
   }
 
-  const mainH = mainHouseOf(houses);
+  const mainH = mainHouseOf(houses, asOf);
   const holdY = mainH && mainH.acqDate ? (yearsBetween(mainH.acqDate, asOf) || 0) : 0;
   const liveY = mainH ? liveYearsOf(mainH.livePeriods, asOf) : 0;
-  const oneLive = mainH ? liveNowOf(mainH.livePeriods) : false;
+  const oneLive = mainH ? liveNowOf(mainH.livePeriods, asOf) : false;
 
   const jong = { mode: 'per-taxpayer', persons: [], total: 0, joint: null, oneStatus: stat };
   const jointOne = stat.one && houses.length >= 1 && tps.length === 2 &&
@@ -532,6 +575,7 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
 /** 연도별 보유세 시뮬레이션 (2025 프라임 → baseYear..baseYear+4) */
 function holdSim(inp, scen, opt = {}) {
   const y0 = inp.assumptions.baseYear;
+  const yEnd = Math.max(y0 + 4, opt.toYear || 0);
   const prevMap = {};
   // 2025년(직전연도)으로 세부담상한 기산 — 현행 규정
   {
@@ -548,7 +592,7 @@ function holdSim(inp, scen, opt = {}) {
     for (const k in seedPrev) prevMap[k] = seedPrev[k];
   }
   const rows = [];
-  for (let y = y0; y <= y0 + 4; y++) rows.push(holdCalcYear(inp, scen, y, prevMap, opt));
+  for (let y = y0; y <= yEnd; y++) rows.push(holdCalcYear(inp, scen, y, prevMap, opt));
   return rows;
 }
 
@@ -663,9 +707,19 @@ function yangdoCore(o) {
   d.ltcgHoldRate = holdPart;
   d.ltcgLiveRate = livePart;
 
-  const surRate = heavy ? ((o.heavyCount >= 3) ? P.sur[3] : P.sur[2]) : 0;
+  let surRate = heavy ? ((o.heavyCount >= 3) ? P.sur[3] : P.sur[2]) : 0;
+  let surTransition = false;
+  // 오류 3 (상세본 p72 특례규정): 중과세율이 적용된 '26년 양도분(보유 2년 이상)도
+  // '27.1.1. 이후 예정·확정신고 시 완화세율(2주택 +5%p, 3주택 이상 +10%p) 적용 — 정부안 한정
+  if (heavy && o.scen === 'reform' && o.year === 2026) {
+    surRate = (o.heavyCount >= 3) ? 0.10 : 0.05;
+    surTransition = true;
+  }
   d.surcharge = surRate;
-  if (heavy) d.notes.push(`조정대상지역 다주택 중과 +${Math.round(surRate * 100)}%p (${P.label})`);
+  d.surTransition = surTransition;
+  if (heavy) d.notes.push(surTransition
+    ? `조정대상지역 다주택 중과 +${Math.round(surRate * 100)}%p — '26년 양도분 특례규정(정부안): '27년 예정·확정신고 시 완화세율 적용 (보유 2년 이상 한정, 장기보유특별공제 배제는 유지)`
+    : `조정대상지역 다주택 중과 +${Math.round(surRate * 100)}%p (${P.label})`);
 
   // P0-2 (2026.8.3 정부안 개정안): 장기보유특별공제 절대금액 한도
   //   2028년 양도분 20억원, 2029년 이후 양도분 10억원 (2027년까지는 현행 유지)
@@ -681,11 +735,14 @@ function yangdoCore(o) {
     const ltcgCapOw = ltcgCap === Infinity ? Infinity : ltcgCap * ow.share;
     let ltcgCapped = false;
     if (ltcg > ltcgCapOw) { ltcg = ltcgCapOw; ltcgCapped = true; }
-    let bd = o.sameYearOther ? 0 : P.basicDed;
-    if (!o.sameYearOther && P.bigDed && o.isOne && (o.liveY || 0) >= 10 && full <= 30 * 억) {
-      bd = P.bigDed;
-      if (!d.notes.includes('장기거주 1주택 기본공제 2,500만원 적용')) d.notes.push('장기거주 1주택 기본공제 2,500만원 적용');
-    }
+    // 오류 7 (문답 p48-49): 기본공제는 인별 연간 한도에서 '같은 해 다른 양도 기사용액'만 차감.
+    // 확대공제(10년 거주·30억 이하) 대상이면 한도 2,500만원 — 다른 자산에 250만원을 썼다면
+    // 이 주택에는 2,250만원. 부부 공동명의는 각각 한도 적용(문답 ➋).
+    const bigOk = P.bigDed && o.isOne && (o.liveY || 0) >= 10 && full <= 30 * 억;
+    const bdLimit = bigOk ? P.bigDed : P.basicDed;
+    const bdUsed = o.sameYearOther ? Math.min(bdLimit, Math.max(0, o.usedBasicDed != null ? o.usedBasicDed : P.basicDed)) : 0;
+    const bd = Math.max(0, bdLimit - bdUsed);
+    if (bigOk && !d.notes.includes('장기거주 1주택 기본공제 한도 2,500만원 적용')) d.notes.push('장기거주 1주택 기본공제 한도 2,500만원 적용');
     const base = Math.max(0, taxable - ltcg - bd);
     let gross = 0, mRate = 0;
     if (base > 0) {
@@ -699,10 +756,10 @@ function yangdoCore(o) {
     }
     let senior = 0;
     if (o.seniorMove && o.isOne && P.senior && (ow.age || 0) >= 65) {
-      senior = Math.min(gross * P.senior.rate, P.senior.cap);
+      senior = Math.min(gross * P.senior.rate, P.senior.cap * ow.share); // 한도는 주택 전체 기준 → 지분 안분
     }
     const tax = Math.max(0, gross - senior);
-    d.owners.push({ key: ow.key, share: ow.share, taxable, ltcg, ltcgCapped, ltcgCap: ltcgCap === Infinity ? null : ltcgCapOw, basicDed: base > 0 ? bd : Math.min(bd, taxable - ltcg), base, rate: mRate, gross, senior, tax, local: tax * 0.10, total: tax * 1.10 });
+    d.owners.push({ key: ow.key, share: ow.share, taxable, ltcg, ltcgCapped, ltcgCap: ltcgCap === Infinity ? null : ltcgCapOw, basicDed: base > 0 ? bd : Math.min(bd, taxable - ltcg), bdLimit, bdUsed, base, rate: mRate, gross, senior, tax, local: tax * 0.10, total: tax * 1.10 });
     if (ltcgCapped && !d.notes.some(n => n.includes('장특공제 한도'))) {
       d.notes.push(`정부안 장특공제 한도 적용 (${P.label}) — ${o.year >= 2029 ? '10억원' : '20억원'} 안분 후 초과분 배제`);
     }
@@ -710,7 +767,7 @@ function yangdoCore(o) {
   }
   if ((o.holdY || 0) < 1) d.notes.push('보유 1년 미만 — 단기세율 70%');
   else if ((o.holdY || 0) < 2) d.notes.push('보유 1~2년 — 단기세율 60%');
-  if (o.sameYearOther) d.notes.push('같은 해 다른 양도 있음 — 기본공제(250만원)는 인별 연 1회만 적용되어 이번 계산에서 제외');
+  if (o.sameYearOther) d.notes.push(`같은 해 다른 양도의 기본공제 기사용액을 인별 한도에서 차감했습니다 (한도·기사용·잔여는 상세 내역 참조)`);
   d.local = d.tax * 0.10;
   d.total = d.tax + d.local;
   return d;
@@ -724,42 +781,47 @@ function sellSim(inp, scen) {
   const y0 = inp.assumptions.baseYear;
   const sd = ym(s.date);
   const saleM = sd ? sd.m : 6;
+  const saleYear = sd ? sd.y : y0;
   const dayMatch = /^\d{4}-\d{1,2}-(\d{1,2})/.exec(String(s.date || ''));
   const saleDay = dayMatch ? +dayMatch[1] : null;
-  // 이슈 2: 과세기준일(6/1) 판정 — 잔금일이 6월 1일 이전(당일 포함)이면 그해 보유세는 매수자 부담.
-  // 일 미입력 시 5월까지만 제외, 6월은 보수적으로 매도자 부담 처리.
   const before61 = saleM < 6 || (saleM === 6 && saleDay != null && saleDay <= 1);
 
-  const holdRows = holdSim(inp, scen);
-  const holdRowsEx = holdSim(inp, scen, { excludeId: h.id });
+  // 오류 1: 입력한 매도연도를 반드시 포함 — 기본 비교 구간(y0~y0+4) 밖이면
+  // 매도연도를 끝으로 하는 5개 연도로 비교 구간을 이동한다.
+  const years = [];
+  if (saleYear <= y0 + 4) { for (let y = y0; y <= y0 + 4; y++) years.push(y); }
+  else { for (let y = Math.max(y0, saleYear - 4); y <= saleYear; y++) years.push(y); }
 
-  // 이슈 5: 양도 대상이 특례주택(상속 등)이면 그 주택 자신을 주택 수에서 제외해
-  // 비과세를 만들 수 없다 → 대상 주택의 제외 플래그를 끄고 주택 수를 판정한다.
+  const toYear = years[years.length - 1];
+  const holdRows = holdSim(inp, scen, { toYear });
+  const holdRowsEx = holdSim(inp, scen, { excludeId: h.id, toYear });
+  const holdOf = y => holdRows[y - y0];
+  const holdExOf = y => holdRowsEx[y - y0];
+
   const targetFlagged = h.flags && (h.flags.inherit || h.flags.lowLocal || h.flags.popDecline);
   const judgeHouses = targetFlagged
     ? inp.houses.map(x => x.id === h.id
       ? Object.assign({}, x, { flags: Object.assign({}, x.flags, { inherit: false, lowLocal: false, popDecline: false }) })
       : x)
     : inp.houses;
-  const rc = rightsCountOf(inp);   // P0-5: 분양권·입주권 주택 수 산입
+  const rc = rightsCountOf(inp);
   const otherSh = shareOf(h, 'other');
+  const metroHouse = METRO_REGIONS.some(m => String(h.region || '').indexOf(m) === 0);
+  const dl = temp2Deadline(inp.houses);
 
   const rows = [];
-  for (let i = 0; i < holdRows.length; i++) {
-    const Y = y0 + i;
+  for (const Y of years) {
     const saleYM = `${Y}-${String(saleM).padStart(2, '0')}`;
     const saleDate = saleDay != null ? `${saleYM}-${String(saleDay).padStart(2, '0')}` : saleYM;
 
-    // 이슈 2: 매도 전 연도는 전체 보유세 유지, 매도 연도만 6/1 판정으로 제외
-    const holdThis = before61 ? holdRowsEx[i].holdTax : holdRows[i].holdTax;
+    const holdThis = before61 ? holdExOf(Y).holdTax : holdOf(Y).holdTax;
     let cum = 0;
-    for (let k = 0; k < i; k++) cum += holdRows[k].holdTax;
+    for (let y = y0; y < Y; y++) cum += holdOf(y).holdTax;
     cum += holdThis;
 
     const stat = oneStatusOf(judgeHouses, rc, saleYM);
     const needLive = adjYes(h.adjAcq) && (!h.acqDate || h.acqDate >= '2017-08');
     const heavyAdj = adjYes(h.adjSale);
-    // 이슈 6B: 제3자 지분의 세액은 합산하지 않는다 (본인·배우자 귀속분만)
     const owners = [];
     for (const key of ['me', 'spouse']) {
       const sh = shareOf(h, key);
@@ -769,9 +831,29 @@ function sellSim(inp, scen) {
     const holdY = h.acqDate ? (yearsBetween(h.acqDate, saleYM) || 0) : 0;
     const liveY = liveYearsOf(h.livePeriods, saleYM);
     const salePrice = (s.price || 0) * 억 * Math.pow(1 + (inp.assumptions.marketGrowth || 0) / 100, Y - y0);
-
-    // 이슈 1: 중과 한시 배제(~2026-05-09) + 경과규정(종료일 전 계약) 선택 입력
     const suspended = heavySuspendedAt(saleDate) || !!s.contractBefore;
+
+    // 오류 4 (조특법 §71의3): 고령자 특례 법정 요건 전부 검증 — 미충족 시 미적용 + 사유 표시
+    let seniorOk = false, seniorWhy = [];
+    if (s.seniorMove) {
+      const contLive = (function () { // 양도일 현재 '계속 거주 중' 기간 (열린 구간)
+        for (const pr of (h.livePeriods || [])) {
+          if (pr.from && !pr.to) {
+            const yv = yearsBetween(pr.from, saleYM);
+            if (yv != null && ymVal(ym(pr.from)) <= ymVal(ym(saleYM))) return yv;
+          }
+        }
+        return 0;
+      })();
+      const ageAt = owners.length ? Math.max.apply(null, owners.map(o => o.age || 0)) : 0;
+      if (!(Y === 2027 || Y === 2028) || scen !== 'reform') seniorWhy.push('적용기간(2027~2028년 양도, 정부안) 아님');
+      if (!stat.one) seniorWhy.push('1세대 1주택 아님');
+      if (!metroHouse) seniorWhy.push('수도권 소재 주택 아님');
+      if (ageAt < 65) seniorWhy.push('양도일 기준 65세 미만');
+      if (contLive < 2) seniorWhy.push(`양도일 현재 계속 거주 2년 미충족(${contLive.toFixed(1)}년)`);
+      if (liveY < 5) seniorWhy.push(`총 거주기간 5년 미충족(${liveY.toFixed(1)}년)`);
+      seniorOk = seniorWhy.length === 0;
+    }
 
     const yd = yangdoCore({
       year: Y, scen,
@@ -782,8 +864,14 @@ function sellSim(inp, scen) {
       fullPrice: salePrice,
       owners,
       sameYearOther: !!s.sameYearOther,
-      seniorMove: !!s.seniorMove
+      usedBasicDed: (s.usedBasicDed != null ? s.usedBasicDed : 250) * 만,
+      seniorMove: seniorOk
     });
+    if (s.seniorMove && !seniorOk) {
+      yd.notes.push('고령자 지방이주 특례 미적용 — ' + seniorWhy.join(', ') + ' (조특법 §71의3 요건)');
+    } else if (seniorOk) {
+      yd.notes.push('고령자 지방이주 특례 적용 — 양도 후 6개월 내 비수도권 이주·5년 내 수도권 미복귀 등 사후관리 요건 미충족 시 감면세액이 추징됩니다. 한도(’27년 5억·’28년 3억)는 지분비율로 안분했습니다.');
+    }
     if (!stat.one && heavyAdj && suspended) {
       yd.notes.push(s.contractBefore && !heavySuspendedAt(saleDate)
         ? '다주택 중과 — 경과규정(2026-05-09 이전 계약) 선택 적용으로 배제. 적용 가능 여부는 세무전문가 확인 필요'
@@ -794,6 +882,9 @@ function sellSim(inp, scen) {
     }
     if (targetFlagged) yd.notes.push('양도 대상이 특례 표시 주택입니다 — 해당 주택 자신은 주택 수 제외 특례로 비과세를 받을 수 없어 일반 주택 수 기준으로 판정했습니다. 피상속인 보유기간 통산 등 세부 특례는 확인 필요');
     if (otherSh > 0) yd.notes.push(`제3자 지분 ${Math.round(otherSh * 100)}%의 양도세는 합계에서 제외했습니다 (본인·배우자 귀속분만 표시)`);
+    if (dl && !dl.unknown && stat.temp2) yd.notes.push(`일시적 2주택 — 종전주택 처분기한 ${dl.until} (신규주택 취득 후 ${dl.years}년, '26.8.3. 이전 취득·계약분은 3년 경과조치). 기한 경과 시 특례가 해제됩니다.`);
+    if (dl && !dl.unknown && !stat.temp2 && inp.houses.some(x => x.flags && x.flags.temp2)) yd.notes.push(`일시적 2주택 처분기한(${dl.until}) 경과 — 이 연도부터 특례를 해제하고 2주택으로 판정했습니다.`);
+    if (dl && dl.unknown) yd.notes.push('일시적 2주택 — 신규주택 취득일이 없어 처분기한을 계산할 수 없습니다. 취득 시기를 입력해 주세요.');
 
     cum = Math.round(cum);
     rows.push({
@@ -801,7 +892,7 @@ function sellSim(inp, scen) {
       grand: cum + yd.total, salePrice, holdY, liveY, before61
     });
   }
-  return { house: h, rows, before61, saleMonth: saleM, saleDay };
+  return { house: h, rows, before61, saleMonth: saleM, saleDay, saleYear, years };
 }
 
 /* =====================================================================
@@ -991,8 +1082,9 @@ function thresholds(inp) {
   const houses = activeHouses(inp);
   if (!houses.length) return null;
   const stat = oneStatusOf(houses);
-  const mainH = mainHouseOf(houses);
-  const oneLive = mainH ? liveNowOf(mainH.livePeriods) : false;
+  const thrAsOf = `${inp.assumptions.baseYear}-06`;
+  const mainH = mainHouseOf(houses, thrAsOf);
+  const oneLive = mainH ? liveNowOf(mainH.livePeriods, thrAsOf) : false;
   const pubNow = houses.reduce((s, h) => s + pubOf(h), 0);
 
   function thrFor(scen, year) {
@@ -1002,7 +1094,7 @@ function thresholds(inp) {
     if (stat.one && both) {
       // 공동명의 1주택: 과세 시작 = max(개별납부 시작, 특례 시작)
       const shares = ['me', 'spouse'].map(k => shareOf(houses[0], k));
-      const live = liveNowOf(houses[0].livePeriods);
+      const live = liveNowOf(houses[0].livePeriods, thrAsOf);
       const indivStart = Math.min(...shares.filter(s => s > 0).map(s => P.dedMulti(live ? 1 : 0) / s));
       const specialStart = P.dedOne(live);
       return Math.max(indivStart, specialStart);
@@ -1015,7 +1107,7 @@ function thresholds(inp) {
       if (!list.length) continue;
       const ls = (() => {
         const ps = list.reduce((s, h) => s + pubOf(h) * shareOf(h, k), 0);
-        const lv = list.filter(h => liveNowOf(h.livePeriods)).reduce((s, h) => s + pubOf(h) * shareOf(h, k), 0);
+        const lv = list.filter(h => liveNowOf(h.livePeriods, thrAsOf)).reduce((s, h) => s + pubOf(h) * shareOf(h, k), 0);
         return ps > 0 ? lv / ps : 0;
       })();
       sum += P.dedMulti(ls);
@@ -1091,7 +1183,7 @@ function validateInput(inp) {
       // 불리한 방향인지를 문구에 그대로 적는다. '보수적'은 실제 보수적일 때만 쓴다.
       if (h.flags.inherit) {
         let tail = '';
-        if (!h.acqDate) tail = ' 상속개시일(취득 시기)이 없어 만료 시점을 판정하지 못했습니다 — STEP 2에서 입력해 주세요.';
+        if (!h.acqDate) tail = ' 상속개시일(취득 시기)이 없어 특례를 적용하지 않았습니다(주택 수 포함, 불리한 방향) — STEP 2에서 취득 시기를 입력하면 특례를 반영합니다.';
         else if (inheritForever(h)) tail = ' 소액지분·저가주택 요건에 해당해 기간 제한 없이 제외됩니다.';
         else {
           const exp = inheritExpiryYear({ houses: [h], assumptions: inp.assumptions });
@@ -1175,8 +1267,12 @@ function validateInput(inp) {
   }
   houses.forEach((h, i) => {
     const nm = h.name || `주택 ${i + 1}`;
-    if (h.flags && h.flags.lowLocal && !lowLocalEligible(h)) confirms.push({ code: 'SPECIAL_INVALID', msg: `${nm} — 지방 저가주택 표시가 있으나 요건(수도권 외 + 공시 3억 이하) 미충족으로 적용하지 않았습니다.` });
-    if (h.flags && h.flags.popDecline && !popDeclineEligible(h)) confirms.push({ code: 'SPECIAL_INVALID', msg: `${nm} — 인구감소지역 표시가 있으나 요건(수도권 외 + 공시 4억 이하 잠정) 미충족으로 적용하지 않았습니다. 세부 요건은 확인이 필요합니다.` });
+    if (h.flags && h.flags.lowLocal && !lowLocalEligible(h)) confirms.push({ code: 'SPECIAL_INVALID', msg: `${nm} — 지방 저가주택 표시가 있으나 요건(수도권·광역시 외 + 공시 3억 이하) 미충족으로 적용하지 않았습니다. 광역시 내 군지역 예외는 자동 판정을 지원하지 않습니다.` });
+    if (h.flags && h.flags.popDecline && !popDeclineEligible(h)) confirms.push({ code: 'SPECIAL_INVALID', msg: `${nm} — 인구감소지역 표시가 있으나 자동 인정 요건(수도권·광역시 외 + 공시 4억 이하 + '26.1.1. 이후 취득) 미충족으로 적용하지 않았습니다. 인구감소지역 9억·관심지역 6억 상한과 광역시 내 군지역 예외는 지역 세부정보가 없어 자동 판정을 지원하지 않습니다(상세본 p70-71).` });
+    {
+      const fmv = futureMoveIn(h.livePeriods, RULES.reviewedAt.slice(0, 7));
+      if (fmv) confirms.push({ code: 'FUTURE_MOVEIN', msg: `${nm} — ${ym(fmv).y}년 ${ym(fmv).m}월부터 실거주 예정으로 입력되었습니다. 그 전 연도는 비거주로 계산합니다.` });
+    }
     if (shareOf(h, 'other') > 0) confirms.push({ code: 'THIRD_PARTY', msg: `${nm} — 제3자 지분 ${Math.round(shareOf(h, 'other') * 100)}%: 종부세·양도세는 본인·배우자 귀속분만 계산하며, 재산세 표시는 물건 전체 기준입니다.` });
   });
   if (purposes.includes('acquire') && (inp.acquire || {}).first) {
@@ -1302,7 +1398,8 @@ if (typeof module !== 'undefined' && module.exports) {
     acqBaseRate, acquisitionTax, giftAcquisitionTax, giftTaxCalc, giftFull,
     jointConvertAnalysis, thresholds, sensitivity, validateInput, confidenceGrade, conclusionOf,
     inheritExcludedAt, inheritForever, inheritExpiryYear, specialExcludedCount,
-    heavySuspendedAt, lowLocalEligible, popDeclineEligible,
+    heavySuspendedAt, lowLocalEligible, popDeclineEligible, nonMetroEligible,
+    temp2Deadline, temp2ActiveAt, futureMoveIn,
     JR_NORMAL, JR_HEAVY, JR_2027, JR_2028, oneStatusOf
   };
 }

@@ -231,10 +231,11 @@ console.log('\nP0-2 상속 특례 만료 — 2029년부터 다주택 전환');
   const inpLow = gc3Input(true);
   inpLow.houses[1].official = 5.5;
   TB('지분 공시가 6억 이하(수도권) — 만료 없음', E.inheritExpiryYear(inpLow) === null, JSON.stringify(E.inheritExpiryYear(inpLow)));
-  // 상속개시일 미입력 — 제외 유지 + 만료 판정 불가
+  // [2026-08-13 지시서 오류 8] 상속개시일 미입력 시 특례를 '적용하지 않는다'로 반전 —
+  // 필수정보 없이 유리한 자동 적용 금지. 미입력 → 주택 수 포함(다주택 공제) + 안내.
   const inpNoDate = gc3Input(true);
   inpNoDate.houses[1].acqDate = '';
-  TB('상속개시일 미입력 — 만료 판정 없음(제외 유지)', E.inheritExpiryYear(inpNoDate) === null && E.holdSim(inpNoDate, 'reform')[4].jong.persons[0].deduct === 14 * 억, '');
+  TB('상속개시일 미입력 — 특례 미적용(다주택 판정)', E.inheritExpiryYear(inpNoDate) === null && E.holdSim(inpNoDate, 'reform')[4].jong.persons[0].deduct < 14 * 억, '');
   // 결론 문장에 전환 안내 포함
   const valid = E.validateInput(inp);
   const concl = E.conclusionOf(inp, cur, ref, valid, E.sensitivity(inp));
