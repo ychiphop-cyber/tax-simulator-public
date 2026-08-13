@@ -2413,8 +2413,9 @@ const CONFIG = {
   GA4_ID: ''               // GA4 측정 ID 입력 시에만 이벤트 전송 (이벤트명·유입경로만, 입력값은 전송하지 않음)
 };
 const VERSION = {
-  current: 'v3.0.2', updated: '2026-08-13',
+  current: 'v3.0.3', updated: '2026-08-13',
   log: [
+    ['v3.0.3', '2026-08-13', '결과 하단 재배치(PDF 저장 → 내 사례 → 유튜브 → 오류·개선 → 근거와 한계) 및 문구 개선'],
     ['v3.0.2', '2026-08-13', '페이지 끝 중복 사례 CTA 제거 (본 블록만 유지)'],
     ['v3.0.1', '2026-08-13', "'내 사례 남기기' Google Form 연결 — 사례 접수 CTA 활성화"],
     ['v3.0', '2026-08-13', '공식 문서 대조 전면 개정 — 매도연도 자유 입력, 미래 전입 연도별 판정, 26년 양도 중과 경과특례, 고령자 특례 요건 검증·한도 안분, 일시적2주택 처분기한 자동 해제, 지방특례 광역시 제외, 기본공제 잔여액 방식, 상속개시일 필수화 + 실제 PDF 저장·입력 자동복원 제거·심층분석 상태 보존·사례 접수 CTA'],
@@ -3036,13 +3037,13 @@ function renderReport() {
   if (ctx.gift) parts.push(giftHTML(ctx));
   if (ctx.acq) parts.push(acqHTML(ctx));
   parts.push(detailHTML(ctx));
-  parts.push(ctaHTML('main')); // 오류·개선 요청 CTA — 계산 근거 직후
   parts.push('</div>');
 
-  parts.push(basisHTML(ctx));
-  parts.push(caseCtaHTML('main')); // 내 사례 남기기 — 결과 화면 아래 (§7)
-  parts.push(ytCtaHTML());       // 유튜브 CTA — 영상 URL 설정 시 해당 영상으로 교체
-  // 맨 끝 보조 '내 사례' CTA는 본 블록과 중복이라 제거 (2026-08-13 사용자 요청)
+  parts.push(actionsHTML());       // PDF 저장·입력 수정·초기화
+  parts.push(caseCtaHTML('main')); // 내 사례 남기기
+  parts.push(ytCtaHTML());         // 유튜브 영상
+  parts.push(ctaHTML('main'));     // 오류·개선 요청하기
+  parts.push(basisHTML(ctx));      // 근거와 한계 — 제일 마지막
 
   $('#report').innerHTML = parts.join('');
   wireReport(ctx);
@@ -3055,11 +3056,23 @@ function ytCtaHTML() {
   if (!url) return '';
   return `<div class="cta" style="border-color:var(--line);background:var(--surface)">
     <h3 style="color:var(--ink)">세제개편안 핵심 해석 영상</h3>
-    <p>8·3 세제개편의 핵심 내용과 해석은 유튜브 「닥터마빈의 재테크 에세이」에서 이어집니다.</p>
+    <p>8·3 세제개편안의 핵심 내용과 실제 영향은 유튜브 「닥터마빈의 재테크 에세이」에서 이어서 설명드립니다.</p>
     <a class="btn" data-ev="youtube_click" href="${esc(url)}" target="_blank" rel="noopener">${CONFIG.YOUTUBE_FEATURE_URL ? '해석 영상 보기 →' : '유튜브에서 보기 →'}</a>
   </div>`;
 }
 
+/* 결과 액션 — PDF 저장을 별도 영역으로 (하단 순서: PDF → 내 사례 → 유튜브 → 오류·개선 → 근거) */
+function actionsHTML() {
+  return `<div class="card no-print">
+    <h2>결과 저장</h2>
+    <p class="hint">지금 화면의 전체 결과(심층 분석 포함)를 PDF 파일로 저장합니다.</p>
+    <div class="chiprow" style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn primary" id="btnPrint" style="flex:none">결과 PDF 저장</button>
+      <button class="btn" id="btnEdit">입력 수정하기</button>
+      <button class="btn ghost" id="btnReset">처음부터 다시</button>
+    </div>
+  </div>`;
+}
 /* 오류·개선 요청 CTA (2026-08-13 §6) — 계산 오류·오탈자·사용성·개선 아이디어 접수 */
 function ctaHTML(kind) {
   if (!CONFIG.BLOG_QNA_URL || kind !== 'main') return '';
@@ -3079,11 +3092,11 @@ function caseCtaHTML(kind) {
   }
   const url = esc(CONFIG.CASE_FORM_URL);
   if (kind === 'main') return `<div class="cta">
-    <h3>내 경우가 조금 애매한가요?</h3>
-    <p>계산기를 이용하다 궁금한 점이 생겼다면 현재 상황을 남겨주세요.<br>
-    비슷한 질문이 많거나 많은 분들에게 도움이 될 사례는 닥터마빈이 직접 검토해 영상이나 블로그에서 답변드립니다.</p>
+    <h3>내 경우에는 어떻게 하는 게 좋을까요?</h3>
+    <p>계산 결과를 보다가 궁금한 점이 생겼다면 현재 상황과 고민을 남겨주세요.<br>
+    비슷한 고민이 많거나 도움이 될 만한 사례는 닥터마빈이 직접 검토해 콘텐츠로 답변드립니다.</p>
     <a class="btn" data-ev="case_cta_click" aria-label="내 사례 남기기 — 새 탭에서 설문 양식이 열립니다" href="${url}" target="_blank" rel="noopener noreferrer">내 사례 남기기 →</a>
-    <p class="fine">모든 사연에 개별 답변을 드리는 방식은 아니며, 선정된 사례를 중심으로 콘텐츠에서 답변드립니다. 계산기에 입력하신 내용은 자동으로 전송되지 않습니다.</p>
+    <p class="fine">※ 모든 사연에 개별 답변드리지는 않습니다.<br>※ 계산기에 입력한 내용은 자동으로 전송되지 않습니다.</p>
   </div>`;
   return `<div class="cta">
     <p style="margin-bottom:12px">궁금한 사례가 있나요?</p>
@@ -3599,11 +3612,7 @@ function basisHTML(c) {
     <ul class="notes">${RULES.sources.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
     <div class="notebox"><b>재산세 가정</b> — 1세대 1주택 재산세 공정시장가액비율 특례(공시 3억 이하 43% · 6억 이하 44% · 초과 45%)는 매년 시행령으로 정하며 <b>2026년분까지 확정</b>되어 있습니다. 2027년 이후는 ${c.inp.assumptions.propFairKeep ? '특례가 <b>연장 유지</b>된다고 가정했습니다. 일몰 시 실제 세액은 이보다 높아질 수 있습니다' : '특례 <b>종료(표준 60% 복귀)</b>를 가정했습니다. 연장 시 실제 세액은 이보다 낮아질 수 있습니다'}. 이 가정은 현행·정부안 두 시나리오에 동일하게 적용되어 증감액 비교에는 영향이 없습니다. STEP 5에서 바꿀 수 있습니다.</div>
     <div class="warnbox"><b>참고용 안내</b> — 본 시뮬레이터는 공개된 법령·정부 발표와 사용자가 입력한 정보를 바탕으로 한 <b>참고용 계산 도구</b>입니다. 정부안은 국회 심의 및 최종 법령에 따라 변경될 수 있으며, 실제 세액은 개인별 사실관계에 따라 달라질 수 있습니다. 신고·매도·증여·명의 변경 등 중요한 의사결정 전에는 세무전문가에게 확인하시기 바랍니다.</div>
-    <div class="chiprow no-print" style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
-      <button class="btn" id="btnEdit">입력 수정하기</button>
-      <button class="btn" id="btnPrint">결과 PDF 저장</button>
-      <button class="btn ghost" id="btnReset">처음부터 다시</button>
-    </div>
+
   </div>`;
 }
 
