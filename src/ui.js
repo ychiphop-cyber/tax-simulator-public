@@ -13,11 +13,13 @@ const CONFIG = {
   BLOG_QNA_URL: 'https://blog.naver.com/marbin1982/224374566862', // 질문 허브 글 — 비우면 질문 CTA 자동 숨김
   YOUTUBE_CHANNEL: 'https://youtube.com/channel/UCAQphoJnr83PI1a8JUAlecQ?si=tIWvMYcCiA1r2iFD',
   YOUTUBE_FEATURE_URL: '', // 8·3 해설 영상 업로드 후 URL 입력 — 비어 있으면 영상 CTA 숨김
+  CASE_FORM_URL: '',       // '내 사례 남기기' Google Form URL — 비어 있으면 CTA 숨김 (docs/google-form-setup.md)
   GA4_ID: ''               // GA4 측정 ID 입력 시에만 이벤트 전송 (이벤트명·유입경로만, 입력값은 전송하지 않음)
 };
 const VERSION = {
-  current: 'v2.5', updated: '2026-08-12',
+  current: 'v3.0', updated: '2026-08-13',
   log: [
+    ['v3.0', '2026-08-13', '공식 문서 대조 전면 개정 — 매도연도 자유 입력, 미래 전입 연도별 판정, 26년 양도 중과 경과특례, 고령자 특례 요건 검증·한도 안분, 일시적2주택 처분기한 자동 해제, 지방특례 광역시 제외, 기본공제 잔여액 방식, 상속개시일 필수화 + 실제 PDF 저장·입력 자동복원 제거·심층분석 상태 보존·사례 접수 CTA'],
     ['v2.5', '2026-08-12', '전면 점검 — 다주택 중과 유예(~2026-05-09) 양도일 판정, 매도 누적 보유세 오류 수정, 재산세 과세표준상한 산식 교정(§110의2), 공동명의 납세의무자 합의 선택, 상속주택 단독 보유 판정 수정, 입력 검증 강화'],
     ['v2.4', '2026-08-11', '실사례 검증 반영 — 상속주택 특례 안내 정정·5년 만료 연도별 자동 반영(시행령 §4의2), 재산세 과세표준상한 표시, 공정시장가액비율 가정 고지·토글, 세액공제 분해 표시'],
     ['v2.3', '2026-08-11', '문구 개편 — ‘결과 심층 분석’ 명칭, 질문 CTA 문구 정리, 유튜브 CTA 신설'],
@@ -72,19 +74,26 @@ function defaultInput() {
     people: { me: { age: 55 }, spouse: { age: 53 } },
     houses: [newHouse()],
     purposes: ['hold'],
-    sell: { houseId: null, date: '2027-03-15', price: '', cost: 3000, sameYearOther: false, seniorMove: false, contractBefore: false },
+    sell: { houseId: null, date: '2027-03-15', price: '', cost: 3000, sameYearOther: false, usedBasicDed: 250, seniorMove: false, contractBefore: false },
     acquire: { price: 9, housesAfter: 2, adj: true, big85: false, temp2: true, first: false },
     joint: { houseId: null, share: 50, prior: 0 },
     gift: { type: 'general', relation: 'child', houseId: null, share: 100, value: '', debt: 0, prior: 0, date: '2026-10' },
     assumptions: { baseYear: 2026, policyView: 'both', marketGrowth: 0, officialGrowth: 0, urban: true, propFairKeep: false }
   };
 }
-let S = { step: 1, inp: defaultInput() };
-try {
-  const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
-  if (saved && saved.inp && saved.inp.houses) { S = saved; SEQ = (saved.seq || 50); }
-} catch (e) { }
-function save() { S.seq = SEQ; try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { } }
+let S = { step: 1, inp: defaultInput(), ui: { insightOpen: false } };
+/* 2026-08-13 §4: 세금 입력값은 민감정보 — localStorage 자동 저장·복원을 제거한다.
+   같은 페이지 안의 단계 이동은 메모리(S)로만 유지. 테마 등 UI 선호값만 별도 키 유지. */
+try { localStorage.removeItem(STORE); localStorage.removeItem('taxdx_v2'); } catch (e) { }
+function save() { /* 입력값 영속화 안 함 (§4) */ }
+function resetAll() {
+  S = { step: 1, inp: defaultInput(), ui: { insightOpen: false } };
+  renderAll();
+  window.scrollTo({ top: 0 });
+}
+window.addEventListener('pageshow', function (e) {
+  if (e.persisted) resetAll(); // BFCache 복원은 새 진입으로 보고 초기화
+});
 
 const SIT_LABEL = {
   one_live: '1주택 · 실거주', one_away: '1주택 · 비거주', two: '2주택',
@@ -114,6 +123,7 @@ function numInp() {
     });
   });
   inp.sell.price = num(raw.sell.price); inp.sell.cost = num(raw.sell.cost);
+  inp.sell.usedBasicDed = raw.sell.sameYearOther ? num(raw.sell.usedBasicDed, 250) : null;
   inp.sell.houseId = raw.sell.houseId || (inp.houses[0] && inp.houses[0].id);
   inp.acquire.price = num(raw.acquire.price); inp.acquire.housesAfter = num(raw.acquire.housesAfter, 2);
   inp.joint.share = num(raw.joint.share, 50); inp.joint.prior = num(raw.joint.prior);
@@ -348,6 +358,8 @@ function renderStep4() {
   $('#sellPrice').value = S.inp.sell.price;
   $('#sellCost').value = S.inp.sell.cost;
   $('#sellSameYear').checked = !!S.inp.sell.sameYearOther;
+  const suw = $('#sellUsedWrap');
+  if (suw) { suw.hidden = !S.inp.sell.sameYearOther; $('#sellUsedDed').value = S.inp.sell.usedBasicDed != null ? S.inp.sell.usedBasicDed : 250; }
   $('#sellSenior').checked = !!S.inp.sell.seniorMove;
   const sc = $('#sellContract');
   if (sc) sc.checked = !!S.inp.sell.contractBefore;
@@ -414,7 +426,12 @@ function renderStep6() {
     const adjTxt = v => v === 'yes' ? '규제' : v === 'no' ? '비규제' : '<span style="color:var(--accent)">미확인</span>';
     const flags = Object.entries({ temp2: '일시적2주택', inherit: '상속', lowLocal: '지방저가', rental: '등록임대', popDecline: '인구감소' })
       .filter(([k]) => h.flags[k]).map(([, v]) => v).join('·');
-    const liveTxt = h.liveMode === 'now' ? `거주 중 (${h.liveFrom || '전입 시기 미입력'}~)` : h.liveMode === 'past' ? '과거 거주' : '비거주';
+    const nowYM = RULES.reviewedAt.slice(0, 7);
+    const liveTxt = h.liveMode === 'now'
+      ? (h.liveFrom && h.liveFrom > nowYM
+        ? `<b>${+h.liveFrom.slice(0, 4)}년 ${+h.liveFrom.slice(5, 7)}월부터 실거주 예정</b> (현재 비거주)`
+        : `거주 중${h.liveFrom ? ` · ${+h.liveFrom.slice(0, 4)}년 ${+h.liveFrom.slice(5, 7)}월부터` : ' (전입 시기 미입력)'}`)
+      : h.liveMode === 'past' ? '과거 거주' : '현재 비거주';
     const shareTxt = h.ownerType === 'me' ? '본인 100%' : h.ownerType === 'spouse' ? '배우자 100%'
       : `본인 ${h.shares.me}% · 배우자 ${h.shares.spouse}%${h.shares.other ? ` · 제3자 ${h.shares.other}%` : ''}`;
     return `<div class="sumcard"><div class="shead"><b>${i + 1}. ${esc(h.name)}</b><button class="iconb" data-goto="2">수정</button></div>
@@ -606,10 +623,11 @@ function renderReport() {
   const parts = [];
   parts.push(heroHTML(ctx));
   parts.push(compareChartHTML(ctx));
-  parts.push(`<div class="expandcard"><button class="expandbtn" id="insightBtn">결과 심층 분석 보기 ↓<span class="sm">왜 달라지나 · 과세 전환점 · 민감도 · 공동명의 · 계산 근거</span></button></div>`);
+  const insightOpen = !!(S.ui && S.ui.insightOpen);
+  parts.push(`<div class="expandcard"><button class="expandbtn" id="insightBtn" aria-controls="insightWrap" aria-expanded="${insightOpen}">${insightOpen ? '결과 심층 분석 접기 ↑' : '결과 심층 분석 보기 ↓<span class="sm">왜 달라지나 · 과세 전환점 · 민감도 · 공동명의 · 계산 근거</span>'}</button></div>`);
 
   /* ── RESULT B: 닥터마빈 인사이트 (클릭 시 같은 페이지에서 펼침 · 무료) ── */
-  parts.push('<div id="insightWrap" hidden>');
+  parts.push(`<div id="insightWrap"${insightOpen ? '' : ' hidden'}>`);
   parts.push(opinionHTML(ctx));
   parts.push(whyHTML(ctx));
   parts.push(whenHTML(ctx));
@@ -620,12 +638,13 @@ function renderReport() {
   if (ctx.gift) parts.push(giftHTML(ctx));
   if (ctx.acq) parts.push(acqHTML(ctx));
   parts.push(detailHTML(ctx));
-  parts.push(ctaHTML('main')); // 질문 CTA — 계산 근거 직후 (PRD §3.3)
+  parts.push(ctaHTML('main')); // 오류·개선 요청 CTA — 계산 근거 직후
   parts.push('</div>');
 
   parts.push(basisHTML(ctx));
-  parts.push(ctaHTML('footer')); // 보조 CTA — 페이지 맨 끝 1회
+  parts.push(caseCtaHTML('main')); // 내 사례 남기기 — 결과 화면 아래 (§7)
   parts.push(ytCtaHTML());       // 유튜브 CTA — 영상 URL 설정 시 해당 영상으로 교체
+  parts.push(caseCtaHTML('footer')); // 내 사례 보조 CTA — 페이지 맨 끝
 
   $('#report').innerHTML = parts.join('');
   wireReport(ctx);
@@ -643,19 +662,34 @@ function ytCtaHTML() {
   </div>`;
 }
 
-/* 질문 CTA — BLOG_QNA_URL이 비어 있으면 렌더하지 않는다 (PRD §4.3: 홈으로 임시 연결 금지) */
+/* 오류·개선 요청 CTA (2026-08-13 §6) — 계산 오류·오탈자·사용성·개선 아이디어 접수 */
 function ctaHTML(kind) {
-  if (!CONFIG.BLOG_QNA_URL) return '';
+  if (!CONFIG.BLOG_QNA_URL || kind !== 'main') return '';
   const url = esc(CONFIG.BLOG_QNA_URL);
+  return `<div class="cta" style="border-color:var(--line);background:var(--surface)">
+    <h3 style="color:var(--ink)">계산 결과가 이상하거나 개선이 필요한 부분이 있나요?</h3>
+    <p>계산 오류, 오탈자, 사용성 문제, 기능 개선 아이디어를 블로그 비밀댓글로 남겨주세요. 확인 후 버전 업데이트 내역에 반영합니다.</p>
+    <a class="btn" data-ev="question_cta_click" aria-label="오류·개선 요청하기 — 새 탭에서 블로그가 열립니다" href="${url}" target="_blank" rel="noopener noreferrer">오류·개선 요청하기 →</a>
+  </div>`;
+}
+/* 내 사례 남기기 CTA (§7) — 부동산 고민 사례 수집 (CASE_FORM_URL · Google Form) */
+let caseWarned = false;
+function caseCtaHTML(kind) {
+  if (!CONFIG.CASE_FORM_URL) {
+    if (!caseWarned) { caseWarned = true; try { console.warn('[설정 필요] CONFIG.CASE_FORM_URL이 비어 있어 "내 사례 남기기" CTA를 숨겼습니다. docs/google-form-setup.md 참조.'); } catch (e) { } }
+    return '';
+  }
+  const url = esc(CONFIG.CASE_FORM_URL);
   if (kind === 'main') return `<div class="cta">
-    <h3>내 사례가 애매하게 느껴지나요?</h3>
-    <p>시뮬레이터 결과가 실제 상황과 다르게 느껴지거나, 계산 기준·세제개편 내용 중 궁금한 점이 있다면 블로그 비밀댓글로 남겨주세요. 질문은 모두 확인하며, 내용 중심으로 가능한 범위에서 답변드리겠습니다.</p>
-    <a class="btn" data-ev="question_cta_click" href="${url}" target="_blank" rel="noopener">닥터마빈에게 질문 남기기 →</a>
-    <p class="fine">정확한 주소·연락처 등 개인을 식별할 수 있는 정보는 남기지 마세요.</p>
+    <h3>내 경우가 조금 애매한가요?</h3>
+    <p>계산기를 이용하다 궁금한 점이 생겼다면 현재 상황을 남겨주세요.<br>
+    비슷한 질문이 많거나 많은 분들에게 도움이 될 사례는 닥터마빈이 직접 검토해 영상이나 블로그에서 답변드립니다.</p>
+    <a class="btn" data-ev="case_cta_click" aria-label="내 사례 남기기 — 새 탭에서 설문 양식이 열립니다" href="${url}" target="_blank" rel="noopener noreferrer">내 사례 남기기 →</a>
+    <p class="fine">모든 사연에 개별 답변을 드리는 방식은 아니며, 선정된 사례를 중심으로 콘텐츠에서 답변드립니다. 계산기에 입력하신 내용은 자동으로 전송되지 않습니다.</p>
   </div>`;
   return `<div class="cta">
-    <p style="margin-bottom:12px">계산 결과·적용 기준·오류가 의심되는 부분은 블로그 비밀댓글로 남겨주세요.</p>
-    <a class="btn" data-ev="question_cta_click" href="${url}" target="_blank" rel="noopener">질문 남기기 →</a>
+    <p style="margin-bottom:12px">궁금한 사례가 있나요?</p>
+    <a class="btn" data-ev="case_cta_click" aria-label="내 사례 남기기 — 새 탭에서 설문 양식이 열립니다" href="${url}" target="_blank" rel="noopener noreferrer">내 사례 남기기 →</a>
   </div>`;
 }
 
@@ -696,8 +730,10 @@ function driverText(c) {
   const inp = c.inp;
   const houses = inp.houses;
   const stat = oneStatusOf(houses, 0, `${inp.assumptions.baseYear}-06`); // 기준연도 과세기준일 기준 판정
-  const mainH = houses.find(h => liveNowOf(h.livePeriods)) || houses[0];
-  const live = mainH && liveNowOf(mainH.livePeriods);
+  const opAsOf = `${inp.assumptions.baseYear}-06`;
+  const mainH = houses.find(h => liveNowOf(h.livePeriods, opAsOf)) || houses[0];
+  const live = mainH && liveNowOf(mainH.livePeriods, opAsOf);
+  const futureFrom = mainH ? futureMoveIn(mainH.livePeriods, opAsOf) : null;
   const items = [];
   if (stat.one && live) items.push('기본공제 12억 → <b>14억원</b>(실거주 1주택) — 과세 문턱 상향(감세 요인)');
   if (stat.one && !live) items.push('기본공제 12억 → <b>9억원</b>(비거주 1주택) — 이번 개편에서 부담이 가장 크게 늘어나는 유형');
@@ -818,7 +854,7 @@ function opinionHTML(c) {
   const estMark = houses.some(pubEstimated) ? ' (일부 추정)' : '';
   const facts = `세대 기준 <b>${houses.length}주택</b>${stat.excluded > 0 ? ` (특례 제외 후 실질 ${houses.length - stat.excluded}주택)` : ''}${stat.temp2 ? ' (일시적 2주택 표시)' : ''}, ` +
     `명의 ${anyJoint ? '부부 공동 포함' : '단독'}, 공시가격 합계 <b>${eok(pubNow)}</b>${estMark}, ` +
-    `${live ? `본인 세대가 ${esc(mainH.name || '주요 주택')}에 거주 중` : '보유 주택에 거주하지 않음'}, ` +
+    `${live ? `본인 세대가 ${esc(mainH.name || '주요 주택')}에 거주 중` : (futureFrom ? `현재 비거주 · ${+futureFrom.slice(0, 4)}년 ${+futureFrom.slice(5, 7)}월부터 실거주 예정` : '보유 주택에 거주하지 않음')}, ` +
     `본인 ${inp.people.me.age}세` +
     `${mainH && mainH.acqDate ? `, 주요 주택 취득 ${mainH.acqDate} (보유 ${Math.floor(r26.holdY)}년차, 거주 ${Math.floor(r26.liveY)}년)` : ''}.`;
 
@@ -968,7 +1004,7 @@ function sellHTML(c) {
   }
   return `<div class="card">
     <h2>매도 — ${esc(h.name || '선택 주택')} ${scenBadge(scen0)}</h2>
-    <p class="hint">그해 ${sim.saleMonth}월에 판다고 가정했을 때의 ‘그때까지 낸 보유세 누계 + 그해 양도세’입니다.${sim.before61 ? ' 양도 시기가 6월 1일 이전이라 매도 연도의 보유세는 매수자 부담으로 제외했습니다.' : ''}</p>
+    <p class="hint">비교 구간 <b>${sim.years[0]}~${sim.years[sim.years.length - 1]}년</b> (입력한 양도연도 ${sim.saleYear}년 포함). 그해 ${sim.saleMonth}월에 판다고 가정했을 때의 ‘그때까지 낸 보유세 누계 + 그해 양도세’입니다.${sim.before61 ? ' 양도 시기가 6월 1일 이전이라 매도 연도의 보유세는 매수자 부담으로 제외했습니다.' : ''}</p>
     ${c.pv === 'both' ? `<div class="seg sm no-print" id="sellScen" style="max-width:280px"><button data-v="reform" aria-pressed="${scen0 === 'reform'}">정부안</button><button data-v="current" aria-pressed="${scen0 === 'current'}">현행</button></div>` : ''}
     <div class="chart-head" style="margin-top:10px"><div class="lgs" id="lgSell"></div></div>
     <div class="chart" id="chartSell"></div>
@@ -1129,7 +1165,9 @@ function renderDetailInner(c, year, scen) {
           if (ow0 && ow0.ltcgCapped) h += kvRow('　장특공제 한도 적용 (정부안)', `한도 ${won(ow0.ltcgCap)} → 공제액 ${won(ow0.ltcg)}`);
         }
         sr.yangdo.owners.forEach(o => {
-          h += kvRow(`${o.key === 'me' ? '본인' : o.key === 'spouse' ? '배우자' : '제3자'} (지분 ${Math.round(o.share * 100)}%) — 과표 ${won(o.base)}`, `세액 ${won(o.tax)} + 지방세 ${won(o.local)}`);
+          const bdNote = o.bdUsed > 0 ? ` (한도 ${won(o.bdLimit)} − 기사용 ${won(o.bdUsed)} = 잔여 ${won(o.basicDed)})` : (o.bdLimit === 2500 * 만 ? ' (확대공제 한도 2,500만)' : '');
+          h += kvRow(`${o.key === 'me' ? '본인' : o.key === 'spouse' ? '배우자' : '제3자'} (지분 ${Math.round(o.share * 100)}%) — 과표 ${won(o.base)}${bdNote}`, `세액 ${won(o.tax)} + 지방세 ${won(o.local)}`);
+          if (o.senior > 0) h += kvRow('　고령자 지방이주 감면 (한도 지분 안분)', '−' + won(o.senior));
         });
         h += kvRow('양도세 합계', won(sr.yangdo.total), 'total');
       }
@@ -1152,54 +1190,167 @@ function basisHTML(c) {
       <p class="subtle">오류 제보는 확인 후 버전업과 함께 변경 내역으로 공개합니다. 제보자 정보는 동의 없이 노출하지 않습니다.</p>
     </div></details>
     ${est.length ? `<h3 class="mini-h">추정값</h3><ul class="notes">${est.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
+    <h3 class="mini-h">자동 계산 미지원 항목 (참고용 표시)</h3>
+    <ul class="notes">
+      <li>양도소득세 납부유예, 상생임대주택 특례, 등록임대·미분양 주택 특례 정비, 토지분 종부세 — <b>자동 계산 미지원</b>, 해당 시 전문가 확인 필요</li>
+      <li>부득이한 사유(취학·근무 등)의 비거주기간 거주 인정 — 미지원</li>
+      <li>인구감소지역 9억·관심지역 6억 상한, 광역시 내 군지역 예외 — 지역 세부정보가 없어 <b>추가 정보 필요</b> (자동 인정은 보수적 기준만 적용)</li>
+      <li>상속주택 세부 특례(피상속인 보유기간 통산, 동일세대 판정 등) — 주택 수 판정 외에는 참고용</li>
+    </ul>
     <h3 class="mini-h">출처</h3>
     <ul class="notes">${RULES.sources.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
     <div class="notebox"><b>재산세 가정</b> — 1세대 1주택 재산세 공정시장가액비율 특례(공시 3억 이하 43% · 6억 이하 44% · 초과 45%)는 매년 시행령으로 정하며 <b>2026년분까지 확정</b>되어 있습니다. 2027년 이후는 ${c.inp.assumptions.propFairKeep ? '특례가 <b>연장 유지</b>된다고 가정했습니다. 일몰 시 실제 세액은 이보다 높아질 수 있습니다' : '특례 <b>종료(표준 60% 복귀)</b>를 가정했습니다. 연장 시 실제 세액은 이보다 낮아질 수 있습니다'}. 이 가정은 현행·정부안 두 시나리오에 동일하게 적용되어 증감액 비교에는 영향이 없습니다. STEP 5에서 바꿀 수 있습니다.</div>
     <div class="warnbox"><b>참고용 안내</b> — 본 시뮬레이터는 공개된 법령·정부 발표와 사용자가 입력한 정보를 바탕으로 한 <b>참고용 계산 도구</b>입니다. 정부안은 국회 심의 및 최종 법령에 따라 변경될 수 있으며, 실제 세액은 개인별 사실관계에 따라 달라질 수 있습니다. 신고·매도·증여·명의 변경 등 중요한 의사결정 전에는 세무전문가에게 확인하시기 바랍니다.</div>
     <div class="chiprow no-print" style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
       <button class="btn" id="btnEdit">입력 수정하기</button>
-      <button class="btn" id="btnPrint">결과 인쇄·PDF 저장</button>
+      <button class="btn" id="btnPrint">결과 PDF 저장</button>
       <button class="btn ghost" id="btnReset">처음부터 다시</button>
     </div>
   </div>`;
 }
 
-function wireReport(c) {
-  // 비교 차트
+/* ═══════ §5 · 실제 PDF 파일 생성 (window.print 미사용) ═══════
+   - 번들된 html2canvas + jsPDF 사용 (외부 전송 없음, 정적 페이지에서 동작)
+   - 원본 화면을 건드리지 않도록 복제 DOM을 오프스크린에 만들어 렌더
+   - 심층분석이 닫혀 있어도 PDF에는 포함, 카드 단위로 페이지 배치(중간 잘림 최소화)
+   - 한글은 화면 폰트를 래스터로 캡처하므로 그대로 표시된다 */
+const PDF_LIGHT_VARS = ['--surface:#ffffff', '--page:#ffffff', '--raised:#f4f2ee', '--ink:#12100f', '--ink2:#56534e', '--muted:#8a867e', '--grid:#eae7e0', '--axis:#d6d2c9', '--line:rgba(18,16,15,.15)', '--s1:#A8252C', '--s2:#3d7ab8', '--s3:#c98500', '--s4:#4a3aa7', '--up:#A8252C', '--down:#006300', '--ok:#006300', '--warn2:#c98500', '--accent:#A8252C', '--accent-soft:#fbf1f1', '--ok-soft:#eef6ee', '--warn-soft:#fdf6e9', '--info-soft:#eff4fa', '--r:14px'];
+async function generatePdf() {
+  const btn = $('#btnPrint');
+  if (!btn || btn.dataset.busy) return; // 중복 클릭 방지
+  const live = $('#pdfStatus');
+  const orig = btn.textContent;
+  btn.dataset.busy = '1';
+  btn.textContent = 'PDF 생성 중…';
+  btn.setAttribute('aria-busy', 'true');
+  if (live) live.textContent = 'PDF를 생성하고 있습니다';
+  try {
+    if (typeof html2canvas !== 'function' || !window.jspdf) throw new Error('PDF 라이브러리를 불러오지 못했습니다');
+    await document.fonts.ready; // 웹폰트 로딩 완료 대기
+    await new Promise(r => setTimeout(r, 50));
+
+    // 복제 DOM — 원본 화면 상태(펼침·스크롤)는 변경하지 않는다
+    const clone = $('#report').cloneNode(true);
+    const iw = clone.querySelector('#insightWrap');
+    if (iw) iw.hidden = false; // 닫혀 있어도 PDF에는 심층분석 포함
+    clone.querySelectorAll('.no-print, .cta, .expandcard, button, .seg, input, select').forEach(e => e.remove());
+    const head = document.createElement('div');
+    head.style.cssText = 'padding:0 0 12px';
+    const now = new Date();
+    head.innerHTML = '<div style="font-size:20px;font-weight:700;letter-spacing:-.02em">닥터마빈의 부동산 세금 시뮬레이터 — 결과 보고서</div>' +
+      `<div style="font-size:11px;color:#6b6b6b;margin-top:4px">생성일시 ${now.toLocaleString('ko-KR')} · 기준일 ${RULES.reviewedAt} · ${VERSION.current} · 참고용 계산 결과이며 세무 자문이 아닙니다</div>`;
+    clone.insertBefore(head, clone.firstChild);
+
+    const holder = document.createElement('div');
+    holder.style.cssText = 'position:fixed;left:-12000px;top:0;width:794px;background:#ffffff;color:#12100f;padding:28px;z-index:-1';
+    PDF_LIGHT_VARS.forEach(kv => { const c = kv.indexOf(':'); holder.style.setProperty(kv.slice(0, c), kv.slice(c + 1)); });
+    holder.appendChild(clone);
+    document.body.appendChild(holder);
+    // 차트·레이아웃 렌더 대기 — rAF는 백그라운드 탭에서 실행되지 않으므로 setTimeout 사용
+    await new Promise(r => setTimeout(r, 150));
+
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit: 'pt', format: 'a4', compress: true });
+    const pageW = pdf.internal.pageSize.getWidth(), pageH = pdf.internal.pageSize.getHeight();
+    const margin = 28, maxW = pageW - margin * 2, maxH = pageH - margin * 2;
+
+    // 성능: html2canvas는 호출마다 문서 전체를 복제하므로 '한 번만' 렌더한 뒤
+    // 섹션 경계(offsetTop)를 기준으로 페이지를 자른다 (카드 중간 잘림 최소화).
+    const canvas = await html2canvas(clone, { scale: 1.5, backgroundColor: '#ffffff', logging: false, windowWidth: 794 });
+    const pxRatio = canvas.width / clone.offsetWidth;               // DOM px → canvas px
+    const ptRatio = maxW / canvas.width;                            // canvas px → pdf pt
+    const pageCanvasH = Math.floor(maxH / ptRatio);                 // 한 페이지에 담기는 canvas 높이
+    const cuts = [].slice.call(clone.children)
+      .map(el => Math.round((el.offsetTop + el.offsetHeight) * pxRatio))
+      .filter(v => v > 0 && v < canvas.height).sort((x, y2) => x - y2);
+    let sy = 0;
+    while (sy < canvas.height - 2) {
+      const hardEnd = Math.min(sy + pageCanvasH, canvas.height);
+      // 섹션 경계 중 페이지 한도 안의 마지막 지점에서 자름 (없으면 강제 절단)
+      let end = hardEnd;
+      if (hardEnd < canvas.height) {
+        const fit = cuts.filter(c => c > sy + pageCanvasH * 0.35 && c <= hardEnd);
+        if (fit.length) end = fit[fit.length - 1];
+      }
+      const h = end - sy;
+      const c2 = document.createElement('canvas');
+      c2.width = canvas.width; c2.height = h;
+      c2.getContext('2d').drawImage(canvas, 0, sy, canvas.width, h, 0, 0, canvas.width, h);
+      if (sy > 0) pdf.addPage();
+      pdf.addImage(c2.toDataURL('image/jpeg', 0.87), 'JPEG', margin, margin, maxW, h * ptRatio);
+      sy = end;
+    }
+    document.body.removeChild(holder);
+    const ds = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const filename = `닥터마빈_부동산세금_시뮬레이션_${ds}.pdf`;
+    if (typeof window.__pdfTestHook === 'function') {
+      window.__pdfTestHook({ blob: pdf.output('blob'), filename, pages: pdf.getNumberOfPages() });
+    } else {
+      pdf.save(filename);
+    }
+    track('pdf_save', false);
+    if (live) live.textContent = 'PDF 저장이 완료되었습니다';
+  } catch (err) {
+    if (live) live.textContent = 'PDF 생성에 실패했습니다';
+    alert('PDF 생성에 실패했습니다: ' + (err && err.message ? err.message : err) + '\n잠시 후 다시 시도해 주세요. 문제가 계속되면 브라우저를 최신 버전으로 업데이트해 주세요.');
+  } finally {
+    delete btn.dataset.busy;
+    btn.textContent = orig;
+    btn.removeAttribute('aria-busy');
+  }
+}
+
+/* 차트만 다시 그리기 — 결과 DOM·펼침 상태 불변 (§3) */
+function drawCompareChart(c) {
   const showCur = c.pv !== 'reform', showRef = c.pv !== 'current';
   const series = [];
   if (showRef) series.push({ key: 'r', label: '정부안 (8·3)', varName: 's1' });
   if (showCur) series.push({ key: 'c', label: '현행 유지', varName: 's2' });
-  $('#lgCmp').innerHTML = legendHTML(series);
-  barChart($('#chartCmp'), {
+  const lg = $('#lgCmp'), host = $('#chartCmp');
+  if (!lg || !host) return;
+  lg.innerHTML = legendHTML(series);
+  barChart(host, {
     mode: 'group', series, aria: '현행과 정부안 연도별 보유세 비교',
     data: c.years.map((y, i) => {
       const segs = [];
       if (showRef) segs.push({ key: 'r', value: c.ref[i].holdTax });
       if (showCur) segs.push({ key: 'c', value: c.cur[i].holdTax });
-      return { label: String(y), total: Math.max(...segs.map(s => s.value)), segs };
+      return { label: String(y), total: Math.max.apply(null, segs.map(s => s.value)), segs };
     })
   });
+}
+function redrawCharts(c) {
+  drawCompareChart(c);
+  if (c.sell) renderSellInner(c, c.sellScen || (c.pv === 'current' ? 'current' : 'reform'));
+}
+
+function wireReport(c) {
+  // 비교 차트
+  drawCompareChart(c);
   // 매도
   let sellScenCur = c.pv === 'current' ? 'current' : 'reform';
+  c.sellScen = sellScenCur;
   if (c.sell) {
     renderSellInner(c, sellScenCur);
     const seg = $('#sellScen');
     if (seg) $$('button', seg).forEach(b => b.addEventListener('click', () => {
-      sellScenCur = b.dataset.v;
+      sellScenCur = b.dataset.v; c.sellScen = sellScenCur;
       $$('button', seg).forEach(x => x.setAttribute('aria-pressed', String(x === b)));
       renderSellInner(c, sellScenCur);
     }));
   }
   // 결과 심층 분석 — 같은 페이지에서 펼침/접기 (입력·결과 값 유지)
+  // §3: 펼침 상태는 S.ui.insightOpen에만 저장 — 리렌더에도 보존, 버튼 재클릭 시에만 닫힘
   const iBtn = $('#insightBtn'), iWrap = $('#insightWrap');
   if (iBtn && iWrap) iBtn.addEventListener('click', () => {
     const opening = iWrap.hidden;
+    S.ui.insightOpen = opening;
     iWrap.hidden = !opening;
+    iBtn.setAttribute('aria-expanded', String(opening));
     if (opening) {
       track('insight_open', true);
       iBtn.innerHTML = '결과 심층 분석 접기 ↑';
-      if (c.sell) renderSellInner(c, sellScenCur); // 숨김 중 그려진 차트 폭 보정 (값 변화 없음)
+      if (c.sell) renderSellInner(c, c.sellScen || 'reform');
       iWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
       iBtn.innerHTML = '결과 심층 분석 보기 ↓<span class="sm">왜 달라지나 · 과세 전환점 · 민감도 · 공동명의 · 계산 근거</span>';
@@ -1221,13 +1372,9 @@ function wireReport(c) {
   }));
   // 액션
   $('#btnEdit').addEventListener('click', () => go(6));
-  $('#btnPrint').addEventListener('click', () => window.print());
+  $('#btnPrint').addEventListener('click', generatePdf);
   $('#btnReset').addEventListener('click', () => {
-    if (confirm('입력을 모두 지우고 처음부터 시작할까요?')) {
-      localStorage.removeItem(STORE);
-      S = { step: 1, inp: defaultInput() };
-      go(1);
-    }
+    if (confirm('입력을 모두 지우고 처음부터 시작할까요?')) resetAll(); // §4: 완전 초기화 + 상단 이동
   });
 }
 
@@ -1416,6 +1563,8 @@ function wire() {
   bind('#sellPrice', 'sell.price');
   bind('#sellCost', 'sell.cost');
   bind('#sellSameYear', 'sell.sameYearOther', { evt: 'change' });
+  bind('#sellSameYear', 'sell.sameYearOther', { evt: 'change', after: () => { const w = $('#sellUsedWrap'); if (w) w.hidden = !S.inp.sell.sameYearOther; } });
+  bind('#sellUsedDed', 'sell.usedBasicDed');
   bind('#sellSenior', 'sell.seniorMove', { evt: 'change' });
   bind('#sellContract', 'sell.contractBefore', { evt: 'change' });
   bind('#acqPrice2', 'acquire.price');
@@ -1465,10 +1614,16 @@ function wire() {
     try { localStorage.setItem('taxdx_theme', next); } catch (e) { }
     if (S.step === 7) renderReport();
   });
-  let rt;
+  // §3: 모바일 주소창 변화는 높이만 바꾼다 — 폭이 실제로 변한 경우에만
+  // 결과 DOM을 다시 만들지 않고 차트만 다시 그린다 (펼침 상태·스크롤 보존).
+  let rt, lastW = window.innerWidth;
   window.addEventListener('resize', () => {
     clearTimeout(rt);
-    rt = setTimeout(() => { if (S.step === 7) renderReport(); }, 180);
+    rt = setTimeout(() => {
+      if (window.innerWidth === lastW) return;
+      lastW = window.innerWidth;
+      if (S.step === 7 && R) redrawCharts(R);
+    }, 200);
   });
 }
 

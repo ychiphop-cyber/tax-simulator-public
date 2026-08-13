@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 npm test
-cat src/head.html src/engine.js > index.html
+cat src/head.html src/vendor_html2canvas.js src/vendor_jspdf.js src/engine.js > index.html
 printf '</script>\n<script>\n' >> index.html
 cat src/ui.js >> index.html
 printf '</script>\n</body>\n</html>\n' >> index.html

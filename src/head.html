@@ -264,6 +264,7 @@ footer ul{padding-left:16px;margin:8px 0}
 #appFooter b{color:var(--ink2)}
 #appFooter details{margin-top:4px}
 #appFooter summary{cursor:pointer;color:var(--ink2)}
+.visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 
 @media(min-width:620px){
   .wrap{padding:0 24px 120px}
@@ -394,6 +395,7 @@ footer ul{padding-left:16px;margin:8px 0}
       </div>
       <div class="full chips">
         <label class="chip"><input type="checkbox" id="sellSameYear"><span>같은 해 다른 부동산 양도 있음</span></label>
+        <span class="inline-num" id="sellUsedWrap" hidden><input type="number" step="50" min="0" id="sellUsedDed" value="250"><em>만원 기사용</em></span>
         <label class="chip"><input type="checkbox" id="sellSenior"><span>65세 이상 · 수도권→지방 이주 예정</span></label>
         <label class="chip"><input type="checkbox" id="sellContract"><span>2026-05-09 이전 매매계약 체결 (경과규정)</span></label>
       </div>
@@ -556,6 +558,8 @@ footer ul{padding-left:16px;margin:8px 0}
 </footer>
 
 </div><!-- /wrap -->
+
+<span id="pdfStatus" class="visually-hidden" role="status" aria-live="polite"></span>
 
 <div class="bottnav" id="bottnav">
   <div class="navmsg" id="navMsg"></div>
