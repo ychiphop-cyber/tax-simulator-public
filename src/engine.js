@@ -683,7 +683,9 @@ function yangdoCore(o) {
   if (gain <= 0) { d.notes.push('양도차익이 없어 세액이 없습니다.'); return d; }
 
   const full = o.fullPrice || o.sale;
+  // 상생임대주택 특례(시행령 §155의3): 비과세·장특 표2의 거주기간 제한을 받지 않는다 — liveWaived로 전달
   const exempt = !!o.isOne && (o.holdY || 0) >= 2 && (!o.needLive || (o.liveY || 0) >= 2);
+  if (o.liveWaived && o.isOne && exempt) d.notes.push('상생임대주택 특례 반영 — 거주요건(2년)을 충족한 것으로 보아 계산했습니다 (임대기간·임대료 5% 이내 등 법정 요건 충족 전제).');
   d.exempt = exempt;
   if (o.isOne && (o.holdY || 0) >= 2 && o.needLive && (o.liveY || 0) < 2) {
     d.notes.push('취득 당시 조정대상지역 — 거주 2년 미충족으로 1세대 1주택 비과세가 적용되지 않았습니다.');
@@ -707,7 +709,7 @@ function yangdoCore(o) {
     // 단기 — 장특 없음
   } else if (heavy) {
     d.notes.push('조정대상지역 다주택 중과 — 장기보유특별공제 배제');
-  } else if (exempt && lY >= 2 && hY >= 3) {
+  } else if (exempt && (lY >= 2 || o.liveWaived) && hY >= 3) {
     const t = P.one;
     livePart = Math.min(t.liveMax, t.live * lY);
     holdPart = Math.min(t.holdMax, t.hold * hY);
@@ -839,7 +841,8 @@ function sellSim(inp, scen) {
     cum += holdThis;
 
     const stat = oneStatusOf(judgeHouses, rc, saleYM);
-    const needLive = adjYes(h.adjAcq) && (!h.acqDate || h.acqDate >= '2017-08');
+    const sangYes = h.sangsaeng === 'yes'; // 상생임대 특례 표시 — 거주요건 면제(§155의3)
+    const needLive = adjYes(h.adjAcq) && (!h.acqDate || h.acqDate >= '2017-08') && !sangYes;
     const heavyAdj = adjYes(h.adjSale);
     const owners = [];
     for (const key of ['me', 'spouse']) {
@@ -878,7 +881,7 @@ function sellSim(inp, scen) {
       year: Y, scen,
       sale: salePrice, acq: (h.acqPrice || 0) * 억, cost: (s.cost || 0) * 만,
       holdY, liveY,
-      isOne: stat.one, needLive,
+      isOne: stat.one, needLive, liveWaived: sangYes,
       heavyCount: (!stat.one && heavyAdj && !suspended) ? Math.min(3, inp.houses.length + rc) : 0,
       fullPrice: salePrice,
       owners,
@@ -1017,13 +1020,14 @@ function giftFull(inp) {
     const acqPortion = (h.acqPrice || 0) * 억 * share * (debt / value);
     const holdY = h.acqDate ? (yearsBetween(h.acqDate, giftYM) || 0) : 0;
     const liveY = liveYearsOf(h.livePeriods, giftYM);
-    const needLive = adjYes(h.adjAcq) && (!h.acqDate || h.acqDate >= '2017-08');
+    const giftSangYes = h.sangsaeng === 'yes';
+    const needLive = adjYes(h.adjAcq) && (!h.acqDate || h.acqDate >= '2017-08') && !giftSangYes;
     const giftSuspended = heavySuspendedAt(giftYM);
     giverYangdo = yangdoCore({
       year: giftYear, scen: 'current',
       sale: debt, acq: acqPortion, cost: 0,
       holdY, liveY,
-      isOne: stat.one, needLive,
+      isOne: stat.one, needLive, liveWaived: giftSangYes,
       heavyCount: (!stat.one && adjYes(h.adjNow) && !giftSuspended) ? Math.min(3, houses.length + rc) : 0,
       fullPrice: fullValue,
       owners: [{ key: 'giver', share: 1, age: ((inp.people || {}).me || {}).age || 0 }],
@@ -1232,7 +1236,19 @@ function validateInput(inp) {
       });
       if (h.flags.rental) confirms.push({
         code: 'SPECIAL',
-        msg: `${nm} — 등록임대 특례는 요건이 복잡해 자동 반영하지 않았습니다(합산 과세, 사용자에게 불리한 쪽으로 계산). 요건 충족 시 실제 세액은 이보다 낮을 수 있습니다.`
+        msg: `${nm} — 등록임대주택의 합산배제 및 각종 특례는 등록시기·임대기간·가격요건 등에 따라 달라질 수 있어 자동 계산에 포함하지 않았습니다(합산 과세, 사용자에게 불리한 쪽으로 계산). 요건 충족 시 실제 세액은 이보다 낮을 수 있습니다.`
+      });
+      if (h.sangsaeng === 'yes') confirms.push({
+        code: 'SPECIAL',
+        msg: `${nm} — 상생임대주택 특례 대상으로 표시 — 양도세 비과세·장기보유특별공제의 거주요건(2년)을 충족한 것으로 보아 계산했습니다. 임대기간·임대료 인상률(5% 이내) 등 법정 요건 충족이 전제입니다.`
+      });
+      if (h.sangsaeng === 'unknown') confirms.push({
+        code: 'SPECIAL',
+        msg: `${nm} — 상생임대 특례는 임대기간, 임대료 인상률 등 별도 요건을 충족해야 합니다. 정확한 해당 여부는 별도 확인이 필요합니다. 이번 계산에는 반영하지 않았습니다(거주요건 그대로 적용).`
+      });
+      if (h.flags.redev) confirms.push({
+        code: 'SPECIAL',
+        msg: `${nm} — 재개발·재건축 및 조합원입주권은 관리처분인가일, 입주권 취득시점, 준공시점 등에 따라 보유기간 계산이 달라질 수 있습니다. 현재 시뮬레이터에서는 해당 특례를 자동 계산하지 않습니다.`
       });
     }
   });
@@ -1242,7 +1258,7 @@ function validateInput(inp) {
   if (livingNow.length > 1) confirms.push({ code: 'LIVE_DUP', msg: '두 개 이상의 주택에 현재 거주 중으로 입력되어 있습니다. 실거주는 한 곳만 가능합니다.' });
 
   if (inp.situation === 'unsure') confirms.push({ code: 'UNSURE', msg: '주택 수 판정이 불확실하다고 답하셨습니다 — 잠정 분류로 계산하며, 특례·권리관계에 따라 달라질 수 있습니다.' });
-  if (inp.rights && (inp.rights.presale || inp.rights.occupancy)) confirms.push({ code: 'RIGHTS', msg: '분양권·입주권은 양도세·취득세 주택 수에 포함되지만 이 계산의 종부세에는 반영하지 않았습니다.' });
+  if (inp.rights && (inp.rights.presale || inp.rights.occupancy)) confirms.push({ code: 'RIGHTS', msg: '분양권·입주권은 양도세·취득세 주택 수에 포함되지만 이 계산의 종부세에는 반영하지 않았습니다.' + (inp.rights.occupancy ? ' 조합원입주권은 관리처분인가일·입주권 취득시점·준공시점 등에 따라 보유기간 계산이 달라질 수 있어 해당 특례를 자동 계산하지 않습니다.' : '') });
   if (inp.rights && inp.rights.inherited) {
     const flagged = houses.some(h => h.flags && h.flags.inherit);
     confirms.push({

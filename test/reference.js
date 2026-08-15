@@ -109,14 +109,14 @@ function refSur(year, scen, cnt) {
 function refYangdo(o) {
   const gain = o.sale - o.acq - (o.cost || 0);
   if (gain <= 0) return { tax: 0, local: 0, total: 0, ltcgRate: 0 };
-  const exempt = !!o.isOne && o.holdY >= 2 && (!o.needLive || o.liveY >= 2);
+  const exempt = !!o.isOne && o.holdY >= 2 && (!o.needLive || o.liveY >= 2 || o.liveWaived); // §155의3 상생임대
   if (exempt && o.sale <= 12 * 억) return { tax: 0, local: 0, total: 0, exempt: true, ltcgRate: 0 };
   const ratio = exempt ? (o.sale - 12 * 억) / o.sale : 1;
   const hY = Math.floor(o.holdY), lY = Math.floor(o.liveY || 0);
   const T = refLtcgTables(o.year, o.scen);
   let rate = 0, holdR = 0, liveR = 0;
   if (o.holdY >= 2 && !o.heavy) {
-    if (exempt && lY >= 2 && hY >= 3) {
+    if (exempt && (lY >= 2 || o.liveWaived) && hY >= 3) {
       liveR = Math.min(T.one.liveMax, T.one.live * lY);
       holdR = Math.min(T.one.holdMax, T.one.hold * hY);
       rate = Math.min(.80, liveR + holdR);

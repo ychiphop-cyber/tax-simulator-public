@@ -17,8 +17,9 @@ const CONFIG = {
   GA4_ID: ''               // GA4 측정 ID 입력 시에만 이벤트 전송 (이벤트명·유입경로만, 입력값은 전송하지 않음)
 };
 const VERSION = {
-  current: 'v3.0.4', updated: '2026-08-13',
+  current: 'v3.1.0', updated: '2026-08-15',
   log: [
+    ['v3.1.0', '2026-08-15', '공동명의 명의자별 세액 표시, 주택 유형(연립·다세대 등) 선택, 최대 15채 입력, 상생임대 간편 반영, 재개발·재건축/등록임대 안내 강화'],
     ['v3.0.4', '2026-08-13', '긴급 수정 — 비거주 결과 크래시(futureFrom), 미래 입주 예정 상태 구분, 연도별 실효 문턱(공동명의 max), 중첩 거주기간 병합, PDF 페이지 분할·속도 개선'],
     ['v3.0.3', '2026-08-13', '결과 하단 재배치(PDF 저장 → 내 사례 → 유튜브 → 오류·개선 → 근거와 한계) 및 문구 개선'],
     ['v3.0.2', '2026-08-13', '페이지 끝 중복 사례 CTA 제거 (본 블록만 유지)'],
@@ -68,7 +69,8 @@ function newHouse() {
     acqPrice: '', acqDate: '',
     ownerType: 'me', shares: { me: 100, spouse: 0, other: 0 }, acqCause: 'buy',
     liveMode: 'none', liveFrom: '', pastPeriods: [],
-    flags: { temp2: false, inherit: false, lowLocal: false, rental: false, popDecline: false }
+    htype: 'apt', sangsaeng: 'no', accOpen: false,
+    flags: { temp2: false, inherit: false, lowLocal: false, rental: false, popDecline: false, redev: false }
   };
 }
 function defaultInput() {
@@ -146,6 +148,7 @@ function uiConfirms(inp) {
   S.inp.houses.forEach((h, i) => {
     const nm = h.name || `주택 ${i + 1}`;
     const nowYM = RULES.reviewedAt.slice(0, 7);
+    if (h.htype && h.htype !== 'apt' && h.priceMode === 'market') out.push({ code: 'HTYPE_EST', msg: `${nm} — 아파트 외 주택(${({ row: '연립·다세대', detached: '단독·다가구', etc: '기타' })[h.htype] || ''})은 시세×69% 공시가격 추정의 정확도가 낮습니다. 공시가격 직접 입력을 권장합니다.` });
     if (h.liveMode === 'now' && !h.liveFrom) out.push({ code: 'LIVE_FROM', msg: `${nm} — 전입 시기 미입력. 취득일부터 거주한 것으로 가정했습니다.` });
     if (h.liveMode === 'now' && h.liveFrom && h.liveFrom > nowYM) out.push({ code: 'LIVE_FUTURE', msg: `${nm} — '현재 거주 중'인데 전입 시기가 미래(${h.liveFrom})입니다. '미래 입주 예정'으로 선택해 주세요.` });
     if (h.liveMode === 'future' && !h.liveFrom) out.push({ code: 'MOVEIN_MISSING', msg: `${nm} — 미래 입주 예정을 선택했으나 입주 예정 연월이 없어 비거주로 계산했습니다.` });
@@ -221,13 +224,16 @@ function renderStep2() {
   const wrap = $('#houseCards');
   wrap.innerHTML = S.inp.houses.map((h, i) => {
     const isMarket = h.priceMode === 'market';
+    const notApt = h.htype && h.htype !== 'apt';
     const conv = isMarket
       ? (num(h.market) > 0 ? `공시가격 추정 ≈ <b>${(num(h.market) * 0.69).toFixed(2).replace(/\.?0+$/, '')}억원</b> (시세 × 69%, 2026 공동주택 참고값)` : '시세 × 69%를 공시가격으로 추정합니다')
       : (num(h.official) > 0 ? `시세 환산 참고 ≈ ${(num(h.official) / 0.69).toFixed(1)}억원` : '부동산공시가격알리미의 공시가격을 입력하세요');
+    const notAptWarn = (notApt && isMarket)
+      ? '<p class="subtle" style="color:var(--accent);font-weight:700">아파트 외 주택은 시세×69% 공시가격 추정의 정확도가 낮습니다. 부동산공시가격알리미에서 공시가격을 확인해 직접 입력하시길 권장합니다.</p>' : '';
     return `<div class="hcard" data-hcard="${i}">
       <div class="hhead">
         <div class="hno">${i + 1}</div>
-        <input class="hname" data-h="${i}" data-k="name" value="${esc(h.name)}" placeholder="주택 ${i + 1} (예: 마포 아파트)">
+        <input class="hname" data-h="${i}" data-k="name" value="${esc(h.name)}" placeholder="주택 ${i + 1} (아파트·연립·다세대·단독 모두 가능)">
         <button class="iconb" data-dup="${i}">복제</button>
         <button class="iconb" data-del="${i}" ${S.inp.houses.length === 1 ? 'disabled' : ''}>삭제</button>
       </div>
@@ -235,6 +241,10 @@ function renderStep2() {
         <div>
           <label class="mini">소재지</label>
           <select data-h="${i}" data-k="region">${REGIONS.map(r => `<option ${h.region === r ? 'selected' : ''}>${r}</option>`).join('')}</select>
+        </div>
+        <div>
+          <label class="mini">주택 유형</label>
+          <select data-h="${i}" data-k="htype">${[['apt', '아파트'], ['row', '연립·다세대'], ['detached', '단독·다가구'], ['etc', '기타 주택']].map(([v, l]) => `<option value="${v}" ${(h.htype || 'apt') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         </div>
         <div>
           <label class="mini">전용면적</label>
@@ -255,7 +265,7 @@ function renderStep2() {
           <label class="mini">${isMarket ? '현재 시세' : '2026년 공시가격'}
             <span class="inline-num"><input type="number" step="0.1" min="0" data-h="${i}" data-k="${isMarket ? 'market' : 'official'}" value="${esc(isMarket ? h.market : h.official)}"><em>억원</em></span>
           </label>
-          <p class="subtle">${conv}</p>
+          <p class="subtle">${conv}</p>${notAptWarn}
         </div>
         <div>
           <label class="mini">취득가액
@@ -275,8 +285,28 @@ function renderStep2() {
         <label class="chip"><input type="checkbox" data-h="${i}" data-flag="rental" ${h.flags.rental ? 'checked' : ''}><span>등록임대</span></label>
         <label class="chip"><input type="checkbox" data-h="${i}" data-flag="popDecline" ${h.flags.popDecline ? 'checked' : ''}><span>인구감소지역</span></label>
       </div>
+      <details class="acc" data-acc="${i}" style="margin-top:10px"${(h.accOpen || h.sangsaeng !== 'no' || h.flags.redev) ? ' open' : ''}>
+        <summary>추가 조건이 있나요? (특수한 경우만)</summary>
+        <div style="padding:10px 2px 2px">
+          <label class="mini">상생임대주택 특례 적용 대상인가요?</label>
+          <div class="seg sm" role="group" style="margin-top:4px">
+            ${[['no', '아니오'], ['yes', '예'], ['unknown', '잘 모르겠어요']].map(([v, l]) => `<button type="button" data-h="${i}" data-sang="${v}" aria-pressed="${(h.sangsaeng || 'no') === v}">${l}</button>`).join('')}
+          </div>
+          ${h.sangsaeng === 'yes' ? '<p class="subtle">양도세 거주요건(2년)을 충족한 것으로 보아 계산합니다. 임대기간·임대료 인상률(5% 이내) 등 법정 요건 충족이 전제입니다.</p>' : ''}
+          ${h.sangsaeng === 'unknown' ? '<p class="subtle" style="color:var(--accent)">상생임대 특례는 임대기간, 임대료 인상률 등 별도 요건을 충족해야 합니다. 정확한 해당 여부는 별도 확인이 필요합니다. 계산에는 반영하지 않습니다.</p>' : ''}
+          <div class="chips" style="margin-top:10px">
+            <label class="chip"><input type="checkbox" data-h="${i}" data-flag="redev" ${h.flags.redev ? 'checked' : ''}><span>재개발·재건축 진행 주택</span></label>
+          </div>
+          ${h.flags.redev ? '<p class="subtle" style="color:var(--accent)">재개발·재건축 및 조합원입주권은 관리처분인가일, 입주권 취득시점, 준공시점 등에 따라 보유기간 계산이 달라질 수 있습니다. 현재 시뮬레이터에서는 해당 특례를 자동 계산하지 않습니다.</p>' : ''}
+        </div>
+      </details>
     </div>`;
   }).join('');
+  const addBtn = $('#addHouse');
+  if (addBtn) {
+    addBtn.disabled = S.inp.houses.length >= 15;
+    addBtn.textContent = S.inp.houses.length >= 15 ? '주택은 최대 15채까지 입력할 수 있습니다' : '＋ 주택 추가';
+  }
 }
 
 /* ── 스텝 3 ── */
@@ -443,8 +473,11 @@ function renderStep6() {
       ? `시세 ${h.market}억 → 공시 추정 ${(h.market * 0.69).toFixed(2)}억`
       : `공시가격 ${h.official}억`;
     const adjTxt = v => v === 'yes' ? '규제' : v === 'no' ? '비규제' : '<span style="color:var(--accent)">미확인</span>';
-    const flags = Object.entries({ temp2: '일시적2주택', inherit: '상속', lowLocal: '지방저가', rental: '등록임대', popDecline: '인구감소' })
+    let flags = Object.entries({ temp2: '일시적2주택', inherit: '상속', lowLocal: '지방저가', rental: '등록임대', popDecline: '인구감소', redev: '재개발·재건축' })
       .filter(([k]) => h.flags[k]).map(([, v]) => v).join('·');
+    if (h.sangsaeng === 'yes') flags = flags ? flags + '·상생임대' : '상생임대';
+    if (h.sangsaeng === 'unknown') flags = flags ? flags + '·상생임대(확인 필요)' : '상생임대(확인 필요)';
+    const htypeL = { row: '연립·다세대', detached: '단독·다가구', etc: '기타 주택' }[h.htype] || '';
     const nowYM = RULES.reviewedAt.slice(0, 7);
     const liveTxt = (function () {
       const fmt = v => `${+v.slice(0, 4)}년 ${+v.slice(5, 7)}월`;
@@ -458,7 +491,7 @@ function renderStep6() {
     const shareTxt = h.ownerType === 'me' ? '본인 100%' : h.ownerType === 'spouse' ? '배우자 100%'
       : `본인 ${h.shares.me}% · 배우자 ${h.shares.spouse}%${h.shares.other ? ` · 제3자 ${h.shares.other}%` : ''}`;
     return `<div class="sumcard"><div class="shead"><b>${i + 1}. ${esc(h.name)}</b><button class="iconb" data-goto="2">수정</button></div>
-      <div class="sbody">${esc(h.region)} · ${priceTxt} · 취득 ${h.acqDate || '<span style="color:var(--accent)">미입력</span>'} (${h.acqPrice ? h.acqPrice + '억' : '취득가 미입력'})<br>
+      <div class="sbody">${esc(h.region)}${htypeL ? ' · ' + htypeL : ''} · ${priceTxt} · 취득 ${h.acqDate || '<span style="color:var(--accent)">미입력</span>'} (${h.acqPrice ? h.acqPrice + '억' : '취득가 미입력'})<br>
       규제지역 — 현재 ${adjTxt(h.adjNow)} / 취득 시 ${adjTxt(h.adjAcq)} / 양도 시 ${adjTxt(h.adjSale)}<br>
       <b>${shareTxt}</b> · ${liveTxt}${flags ? ` · <span style="color:var(--warn2)">${flags}</span>` : ''}</div></div>`;
   }).join('');
@@ -729,6 +762,45 @@ function caseCtaHTML(kind) {
 }
 
 /* 1) 한 줄 결론 */
+/* 2026-08-15 §1: 공동명의 표시 전용 헬퍼 — 계산 로직 불변, 엔진 결과를 명의자별로 재집계만 한다 */
+function isJointInp(inp) {
+  return (inp.houses || []).some(h => ['me', 'spouse', 'other'].filter(k => num((h.shares || {})[k]) > 0).length >= 2);
+}
+function personHoldOf(r, key) {
+  // 재산세: 물건별 세액 × 지분  /  종부세: 엔진 인별 결과 그대로
+  let prop = 0;
+  r.prop.rows.forEach(pr => { prop += pr.pt.total * (num((pr.h.shares || {})[key]) || 0) / 100; });
+  let jong = 0;
+  const j = r.jong;
+  if (j.mode === 'joint-compare') {
+    if (j.joint.best === 'indiv') { const x = j.joint.indiv.find(v => v.key === key); jong = x ? x.r.total : 0; }
+    else jong = (j.joint.repKey === key) ? j.joint.special.total : 0;
+  } else if (j.persons) {
+    j.persons.forEach(p => { if ((p.taxpayer || 'me') === key) jong += p.total; });
+  }
+  return { prop, jong, total: prop + jong };
+}
+function jointBreakdownHTML(c) {
+  if (!isJointInp(c.inp)) return '';
+  const hasOther = c.inp.houses.some(h => num((h.shares || {}).other) > 0);
+  const keys = [['me', '본인'], ['spouse', '배우자']].concat(hasOther ? [['other', '제3자']] : []);
+  const rows = [
+    { label: `${c.years[0]}년 보유세 (현행·확정)`, r: c.cur[0] },
+    { label: `${c.ref[2].year}년 보유세 (정부안 가정)`, r: c.ref[2] }
+  ];
+  const body = rows.map(({ label, r }) => {
+    const cells = keys.map(([k]) => { const p = personHoldOf(r, k); return `<td>${won(p.total)}</td>`; }).join('');
+    return `<tr><td>${label}</td>${cells}<td class="strong">${won(r.holdTax)}</td></tr>`;
+  }).join('');
+  return `<div class="notebox" style="margin-top:12px">
+    <b>공동명의 안내</b> — 위 카드의 세액은 <b>명의자 전체 합산</b> 금액입니다. 명의자별 예상세액은 아래와 같습니다.
+    <div class="tblwrap" style="margin-top:8px"><table>
+      <thead><tr><th>구분</th>${keys.map(([, l]) => `<th>${l}</th>`).join('')}<th>전체 합산</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>
+    <p class="subtle" style="margin:6px 0 0">재산세는 물건별 세액을 지분으로 나눈 값, 종부세는 인별 계산 결과입니다.${c.cur[0].jong.mode === 'joint-compare' ? ' 부부 1주택 특례 선택 시 종부세는 신청한 납세의무자 1인에게 부과됩니다.' : ''}${hasOther ? ' 제3자 지분의 종부세는 계산 범위 밖이라 재산세 지분만 표시합니다.' : ''} 연도별 인별 상세는 ‘어떻게 계산했나’에서 확인하세요.</p>
+  </div>`;
+}
 function heroHTML(c) {
   const est = c.valid.estimates.length > 0;
   const r26 = c.cur[0], ref28 = c.ref[2];
@@ -757,6 +829,7 @@ function heroHTML(c) {
     </div>
     <div class="chiprow">${scenBadge('current')}${scenBadge('reform')}${est ? estBadge : ''}</div>
     <div class="tiles">${tiles.map(t => `<div class="tile"><div class="k">${t.k}</div><div class="tile-val ${t.cls || ''}">${t.v}</div><div class="s">${t.s}</div></div>`).join('')}</div>
+    ${jointBreakdownHTML(c)}
   </div>`;
 }
 
@@ -1054,7 +1127,7 @@ function sellHTML(c) {
     <div class="chart-head" style="margin-top:10px"><div class="lgs" id="lgSell"></div></div>
     <div class="chart" id="chartSell"></div>
     <div class="tblwrap"><table>
-      <thead><tr><th>매도 연도</th><th>보유세 누계</th><th>양도세(지방세 포함)</th><th>총 세부담</th></tr></thead>
+      <thead><tr><th>매도 연도</th><th>보유세 누계</th><th>양도세(지방세 포함)${isJointInp(c.inp) ? ' · 명의자 합산' : ''}</th><th>총 세부담</th></tr></thead>
       <tbody id="sellTbody"></tbody>
     </table></div>
     <ul class="notes" id="sellNotes" style="margin-top:12px"></ul>
@@ -1078,6 +1151,10 @@ function renderSellInner(c, scen) {
   sim.rows.forEach(r => r.yangdo.notes.forEach(n => notes.add(n)));
   const list = [...notes].map(n => `<li>${esc(n)}</li>`);
   list.unshift(`<li><b>${best.year}년 매도 시 총 세부담이 가장 적습니다</b> — ${won(best.grand)} (양도세 ${won(best.yangdoTotal)}, 보유 ${Math.floor(bestRow.holdY)}년차 · 거주 ${Math.floor(bestRow.liveY)}년 시점).</li>`);
+    if ((bestRow.yangdo.owners || []).length > 1) {
+      const ownNm = { me: '본인', spouse: '배우자' };
+      list.splice(1, 0, `<li><b>명의자별 양도세</b> (표의 금액은 명의자 합산) — ${best.year}년 기준 ${bestRow.yangdo.owners.map(o => `${ownNm[o.key] || o.key} ${won(o.total)} (지분 ${Math.round(o.share * 100)}%)`).join(' · ')}.</li>`);
+    }
   if (c.inp.houses.length >= 2 && adjYes(sim.house.adjSale)) list.push('<li><b>다주택 중과 완화 시점</b> — 정부안 기준 중과 가산세율은 2027년이 가장 낮고(2주택 +5%p·3주택 +10%p), 2029년 원상복귀(+20/+30%p)합니다.</li>');
   $('#sellNotes').innerHTML = list.join('');
 }
@@ -1237,7 +1314,8 @@ function basisHTML(c) {
     ${est.length ? `<h3 class="mini-h">추정값</h3><ul class="notes">${est.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
     <h3 class="mini-h">자동 계산 미지원 항목 (참고용 표시)</h3>
     <ul class="notes">
-      <li>양도소득세 납부유예, 상생임대주택 특례, 등록임대·미분양 주택 특례 정비, 토지분 종부세 — <b>자동 계산 미지원</b>, 해당 시 전문가 확인 필요</li>
+      <li>양도소득세 납부유예, 등록임대·미분양 주택 특례 정비, 토지분 종부세, 재개발·재건축·조합원입주권 특례 — <b>자동 계산 미지원</b>, 해당 시 전문가 확인 필요</li>
+      <li>상생임대주택 특례 — 적용 대상으로 표시한 경우 <b>거주요건(2년) 면제만 간이 반영</b>. 임대기간·임대료 인상률 등 요건 자동 판정은 미지원</li>
       <li>부득이한 사유(취학·근무 등)의 비거주기간 거주 인정 — 미지원</li>
       <li>인구감소지역 9억·관심지역 6억 상한, 광역시 내 군지역 예외 — 지역 세부정보가 없어 <b>추가 정보 필요</b> (자동 인정은 보수적 기준만 적용)</li>
       <li>상속주택 세부 특례(피상속인 보유기간 통산, 동일세대 판정 등) — 주택 수 판정 외에는 참고용</li>
@@ -1502,12 +1580,27 @@ function wire() {
         }
       }
     }
-    if (t.dataset.flag) h.flags[t.dataset.flag] = t.checked;
+    if (t.dataset.flag) {
+      h.flags[t.dataset.flag] = t.checked;
+      if (t.dataset.flag === 'redev') { save(); renderStep2(); return; }
+    }
+    if (t.dataset.k === 'htype') { save(); renderStep2(); return; } // 비아파트 안내 갱신
     save();
   });
   hc.addEventListener('click', e => {
+    const sm = e.target.closest('summary');
+    if (sm) { // 추가 조건 접힘 상태 유지 (재렌더 시 닫히지 않게)
+      const d = sm.parentElement, i = +d.dataset.acc;
+      if (S.inp.houses[i]) setTimeout(() => { S.inp.houses[i].accOpen = d.open; }, 0);
+      return;
+    }
     const t = e.target.closest('button');
     if (!t) return;
+    if (t.dataset.sang) {
+      const h = S.inp.houses[+t.dataset.h];
+      h.sangsaeng = t.dataset.sang; h.accOpen = true;
+      renderStep2(); save(); return;
+    }
     if (t.dataset.adj !== undefined && t.dataset.v) {
       const h = S.inp.houses[+t.dataset.h];
       h[t.dataset.adj] = t.dataset.v;
@@ -1519,7 +1612,7 @@ function wire() {
       renderStep2(); save(); return;
     }
     if (t.dataset.dup !== undefined) {
-      if (S.inp.houses.length >= 6) return;
+      if (S.inp.houses.length >= 15) return;
       const src = S.inp.houses[+t.dataset.dup];
       const cp = JSON.parse(JSON.stringify(src));
       cp.id = newHouse().id;
@@ -1534,7 +1627,7 @@ function wire() {
     }
   });
   $('#addHouse').addEventListener('click', () => {
-    if (S.inp.houses.length >= 6) return;
+    if (S.inp.houses.length >= 15) return;
     S.inp.houses.push(newHouse());
     renderStep2(); save();
   });
