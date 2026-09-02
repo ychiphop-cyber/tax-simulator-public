@@ -242,6 +242,12 @@ const AGE_CREDIT = [[60, 0], [65, .20], [70, .30], [Infinity, .40]];
 const PERIOD_CREDIT = [[5, 0], [10, .20], [15, .40], [Infinity, .50]];      // 보유(현행)/거주(정부안)
 const HOLD_CREDIT_HALF = [[5, 0], [10, .10], [15, .20], [Infinity, .25]];   // 2027 보유공제(절반)
 
+/* 종부세 기본공제 유형 (2026-09-02 지시서 §9) — 4가지 보유형태를 같은 로직으로 처리하지 않는다 */
+const DED_TYPE = {
+  one: 'SINGLE_OWNER_ONE_HOUSEHOLD_HOME',            // TYPE 1: 1세대1주택 단독명의 (실거주 14억 / 비거주 12억)
+  jointOneIndiv: 'JOINT_OWNER_ONE_HOUSEHOLD_HOME',   // TYPE 2: 부부 공동명의 1주택 개별납부 (각 9억 / 각 6억) + 특례 비교
+  multi: 'MULTI_HOME_HOUSEHOLD_INDIVIDUAL_OWNER'     // TYPE 3: 부부 각 1채·일반 다주택 (4억 + 5억 × 거주주택가액비율)
+};
 function jongParams(year, scen) {
   if (scen === 'current' || year <= 2026) {
     return {
@@ -314,6 +320,28 @@ function jongbuPerson(o) {
     : taxpayerType === 'one' ? P.dedOne(!!o.oneLive)
     : P.dedMulti(Math.max(0, Math.min(1, o.liveShare || 0)));
   d.taxpayerType = taxpayerType;
+  d.dedType = DED_TYPE[taxpayerType];
+  // 납세자 단위 데이터(§8) — 호출자가 소유주택·지분가액을 계산해 넘긴다
+  if (o.owner) d.owner = Object.assign({}, o.owner, { taxpayerDeduction: ded });
+  const hh = o.householdHouseCount || o.houseCount || 1;
+  const ratioPct = Math.round(Math.max(0, Math.min(1, o.liveShare || 0)) * 100);
+  if (P.key === 'current') {
+    d.dedWhy = taxpayerType === 'one'
+      ? `세대 기준 1주택 · 단독명의 → 현행 1세대 1주택 기본공제 12억원.`
+      : taxpayerType === 'jointOneIndiv'
+        ? `동일한 1주택을 부부가 공동소유 → 현행 개별납부는 납세의무자 1인당 일반 공제 9억원 (1세대 1주택 특례 신청과 비교).`
+        : `세대 기준 ${hh}주택이므로 1세대 1주택 공제(12억)를 적용하지 않습니다. 현행 기본공제 9억원.`;
+  } else if (taxpayerType === 'one') {
+    d.dedWhy = `세대 기준 1주택${hh > 1 ? '(특례주택 제외)' : ''} · 단독명의 → 1세대 1주택 공제 ${o.oneLive ? '실거주 14억원' : '비거주 12억원 (9·1 수정안: 8·3안의 9억 축소 철회)'}.`;
+  } else if (taxpayerType === 'jointOneIndiv') {
+    d.dedWhy = `부부가 각각 한 채씩 보유한 것이 아니라 동일한 1주택을 공동소유한 경우이므로 공동명의 1주택 규정을 적용합니다 — 개별납부 시 납세의무자 1인당 ${o.oneLive ? '실거주 9억원' : '비거주 6억원(9·1 수정안, 8·3안 4억)'} (지분 안분 없음). 1세대 1주택 특례 신청과 비교해 유리한 쪽을 적용합니다.`;
+  } else {
+    d.dedWhy = (o.householdOneHome
+      ? '세대 기준으로는 1주택(특례주택 제외)이지만 본인이 그 주택의 단독 소유자가 아니므로 1세대 1주택 공제를 적용하지 않습니다. '
+      : `세대 기준 ${hh}주택이므로 1세대 1주택 공제를 적용하지 않습니다. `) + (ratioPct > 0
+      ? `본인이 보유한 주택가액 중 거주용 주택 비율이 ${ratioPct}%이므로 기본공제는 4억원 + 5억원 × ${ratioPct}% = ${won(ded)}입니다.`
+      : `본인 소유 주택이 모두 비거주주택이므로 기본공제는 4억원입니다.`);
+  }
   d.deduct = ded; d.threshold = ded;
   if (o.pubSum <= ded) return d;
 
@@ -418,12 +446,15 @@ function lowLocalEligible(h) {
 function popDeclineEligible(h) {
   return nonMetroEligible(h) && pubOf(h) <= 4 * 억 && !!h.acqDate && h.acqDate >= '2026-01';
 }
-function specialExcludedCount(houses, asOf = null) {
-  return houses.filter(h => h.flags && (
+function specialExcludedIds(houses, asOf = null) {
+  return new Set(houses.filter(h => h.flags && (
     (h.flags.inherit && inheritExcludedAt(h, asOf)) ||
     (h.flags.lowLocal && lowLocalEligible(h)) ||
     (h.flags.popDecline && popDeclineEligible(h))
-  )).length;
+  )).map(h => h.id));
+}
+function specialExcludedCount(houses, asOf = null) {
+  return specialExcludedIds(houses, asOf).size;
 }
 /* 오류 5 (상세본 p73-74): 일시적 2주택 처분기한 — 신규주택 취득일부터 현행 3년,
    조정대상지역 내(종전·신규 모두 조정) 2년으로 단축. 경과조치: '26.8.3. 이전 취득
@@ -531,8 +562,23 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
       avgFair: pubSum > 0 ? aggPBase / pubSum : PROP.fairOther,
       propMainPaid: ent.reduce((s, e) => s + e.mainShare, 0),
       liveShare: pubSum > 0 ? ent.filter(e => e.liveNow).reduce((s, e) => s + e.pubShare, 0) / pubSum : 0,
+      // §8 납세자 단위 데이터 — 각 납세자의 소유주택·지분가액을 먼저 계산한 뒤 공제를 산출한다
+      owner: {
+        ownedHouses: ent.map(e => ({ id: e.h.id, name: e.h.name || '', ownershipShare: e.share, officialValue: e.share > 0 ? e.pubShare / e.share : 0, ownedOfficialValue: e.pubShare, residential: !!e.liveNow })),
+        ownershipShare: ent.reduce((m, e) => { m[e.h.id] = e.share; return m; }, {}),
+        ownedOfficialValue: pubSum,
+        residentialOwnedValue: ent.filter(e => e.liveNow).reduce((s, e) => s + e.pubShare, 0),
+        totalOwnedValue: pubSum,
+        residentialValueRatio: pubSum > 0 ? ent.filter(e => e.liveNow).reduce((s, e) => s + e.pubShare, 0) / pubSum : 0
+      },
       age: (person.age || 0) + (year - inp.assumptions.baseYear),
-      soleOne: stat.one && ent.length === houses.length && ent.every(e => e.share >= 0.999)
+      soleOne: stat.one && (function () {
+        // 1세대 1주택자 판정(§8④): 특례로 제외된 주택을 뺀 '세대의 1주택'을 이 납세자가 단독 소유해야 한다.
+        // 배우자가 상속주택만 따로 보유한 경우 그 배우자는 1세대 1주택자가 아니다.
+        const exIds = specialExcludedIds(houses, asOf);
+        const core = houses.filter(h => !exIds.has(h.id));
+        return (core.length ? core : houses).every(h => shareOf(h, key) >= 0.999);
+      })()
     });
   }
 
@@ -541,7 +587,15 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
   const liveY = mainH ? liveYearsOf(mainH.livePeriods, asOf, mainH.acqDate) : 0;
   const oneLive = mainH ? liveNowOf(mainH.livePeriods, asOf) : false;
 
-  const jong = { mode: 'per-taxpayer', persons: [], total: 0, joint: null, oneStatus: stat };
+  const jong = {
+    mode: 'per-taxpayer', persons: [], total: 0, joint: null, oneStatus: stat,
+    // §8 세대 단위 데이터 — 1세대1주택 특례 판단은 세대 기준, 공제 산출은 납세자 기준
+    household: {
+      householdHouseCount: houses.length,
+      isHouseholdOneHome: !!stat.one,
+      residenceHouseId: (houses.find(h => liveNowOf(h.livePeriods, asOf)) || {}).id || null
+    }
+  };
   const jointOne = stat.one && houses.length >= 1 && tps.length === 2 &&
     tps.every(t => t.houseCount === houses.length);
 
@@ -555,6 +609,7 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
       const r = jongbuPerson({
         year, scen, pubSum: t.pubSum, houseCount: t.houseCount, hasAdj: t.hasAdj,
         isOne: false, jointOneIndiv: true, oneLive, liveShare: t.liveShare,   // 9·1: 1인당 9억/6억 공제, 세액공제·70% FMV는 종전대로 미적용
+        householdHouseCount: houses.length, householdOneHome: stat.one, owner: t.owner,
         age: t.age, holdY, liveY,
         aggPBase: t.aggPBase, avgFair: t.avgFair, propMainPaid: t.propMainPaid,
         prevTotal: prevOf(`indiv|${t.key}`)
@@ -574,6 +629,11 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
       const r = jongbuPerson({
         year, scen, pubSum: pubAll, houseCount: houses.length, hasAdj: rows.some(x => adjYes(x.h.adjNow)),
         isOne: true, oneLive, liveShare: oneLive ? 1 : 0,
+        householdHouseCount: houses.length, householdOneHome: stat.one,
+        owner: {
+          ownedHouses: rows.map(x => ({ id: x.h.id, name: x.h.name || '', ownershipShare: 1, officialValue: x.pub, ownedOfficialValue: x.pub, residential: liveNowOf(x.h.livePeriods, asOf) })),
+          ownedOfficialValue: pubAll, residentialOwnedValue: oneLive ? pubAll : 0, totalOwnedValue: pubAll, residentialValueRatio: oneLive ? 1 : 0
+        },
         age: rep.age, holdY, liveY,
         aggPBase: aggAll, avgFair: pubAll > 0 ? aggAll / pubAll : PROP.fairOther,
         propMainPaid: prop.main,
@@ -602,6 +662,7 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
       const r = jongbuPerson({
         year, scen, pubSum: t.pubSum, houseCount: t.houseCount, hasAdj: t.hasAdj,
         isOne: isOneTp, oneLive: isOneTp ? oneLive : false, liveShare: t.liveShare,
+        householdHouseCount: houses.length, householdOneHome: stat.one, owner: t.owner,
         age: t.age, holdY, liveY,
         aggPBase: t.aggPBase, avgFair: t.avgFair, propMainPaid: t.propMainPaid,
         prevTotal: prevOf(`p|${t.key}`)
@@ -1453,6 +1514,7 @@ function conclusionOf(inp, curRows, refRows, valid, sens) {
 /* node 테스트용 export */
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    DED_TYPE,
     억, 만, RULES, PROP, GIFT_RATES, GIFT_DED,
     progressive, bracketed, stepRate, ym, yearsBetween, liveYearsOf, liveNowOf,
     won, shortWon, eok, pubOf, marketOf, pubAt, marketAt, shareOf,

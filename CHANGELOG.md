@@ -1,5 +1,12 @@
 # 닥터마빈의 부동산 세금 시뮬레이터 — 변경 이력
 
+## v3.2.1 (2026-09-02) — 종부세 보유형태 4분류 검증·설명
+- 검증: 1세대1주택 단독(14/12억) · 부부 공동명의 1주택(각 9/6억 + 특례 비교) · 부부 각 1채(각자 4억 + 5억 × 거주주택가액비율) · 1인 다주택(비율 50% → 6.5억, 75% → 7.75억) · 복합 보유(남편 A+B50%, 아내 B50%) — 기존 엔진이 지시서 표와 전부 일치, 계산 로직 변경 없음
+- 엔진: 납세자 단위 데이터 `owner`(ownedHouses·ownershipShare·ownedOfficialValue·residentialOwnedValue·totalOwnedValue·residentialValueRatio·taxpayerDeduction), 세대 단위 `jong.household`(householdHouseCount·isHouseholdOneHome·residenceHouseId), 공제 유형 상수 `DED_TYPE`(SINGLE_OWNER_ONE_HOUSEHOLD_HOME / JOINT_OWNER_ONE_HOUSEHOLD_HOME / MULTI_HOME_HOUSEHOLD_INDIVIDUAL_OWNER)과 산출 사유 `dedWhy` 추가 (표시 전용)
+- UI: 상세 산식의 기본공제 아래에 공제 유형과 사유("세대 기준 2주택이므로 … 4억원 + 5억원 × 100% = 9억원") 표시, 적용 규칙에 부부 각 1채 단독보유 설명 추가
+- 경계 수정: 1세대1주택자 단독 판정(soleOne)을 '특례 제외 후 남는 주택의 단독 소유' 기준으로 변경(`specialExcludedIds`) — 남편 A(거주) + 아내 상속주택 B 단독 보유 시 남편 9억(다주택 규칙) → 14억(1세대1주택자), 아내 4억. 동일 소유자 사례(GC-3)는 불변
+- test/jong_types.js 69건 (T1~T10, CASE A/B/C, §7 복합, §8·§9·§12 필드, 상속 경계) — npm test 체인 등록
+
 ## v3.2.0 (2026-09-02) — 9·1 수정 세제개편 정부안 반영
 - 정책 기준: 2026.9.1 국무회의 수정 확정 정부안(국회 심의 전, draft_proposal 유지). 규칙 버전 rules-2026.09.01-r1, 정책 기준일 상수 RULES.policyDate, 변경 이력 RULES.policyHistory(8·3 발표안 보존)
 - 비거주 1세대1주택 종부세 기본공제: 정부안 9억 → **12억원 유지** (8·3안의 축소 철회) — jongParams 2027/2028+ dedOne

@@ -17,8 +17,9 @@ const CONFIG = {
   GA4_ID: ''               // GA4 측정 ID 입력 시에만 이벤트 전송 (이벤트명·유입경로만, 입력값은 전송하지 않음)
 };
 const VERSION = {
-  current: 'v3.2.0', updated: '2026-09-02',
+  current: 'v3.2.1', updated: '2026-09-02',
   log: [
+    ['v3.2.1', '2026-09-02', '종부세 보유형태 4분류 검증(1세대1주택 단독 / 부부 공동명의 1주택 / 부부 각 1채 / 일반 다주택) — 납세자별 소유·지분가액 데이터와 공제 유형·산출 사유를 상세 산식에 표시, 회귀테스트 63건 추가'],
     ['v3.2.0', '2026-09-02', '9·1 수정 세제개편 정부안 반영 — 비거주 1주택 종부세 기본공제 12억 유지(9억 축소 철회), 비거주 부부 공동명의 개별납부 1인당 6억(4억→6억)·실거주 9억 유지, 세부담상한 150% 유지(200% 철회), 공동명의 1주택/일반 다주택 공제 로직 분리, 정책 기준일·설명 갱신'],
     ['v3.1.0', '2026-08-15', '공동명의 명의자별 세액 표시, 주택 유형(연립·다세대 등) 선택, 최대 15채 입력, 상생임대 간편 반영, 재개발·재건축/등록임대 안내 강화'],
     ['v3.0.4', '2026-08-13', '긴급 수정 — 비거주 결과 크래시(futureFrom), 미래 입주 예정 상태 구분, 연도별 실효 문턱(공동명의 max), 중첩 거주기간 병합, PDF 페이지 분할·속도 개선'],
@@ -987,6 +988,15 @@ function opinionHTML(c) {
   if (stat.one && !anyJoint) rules.push(`1세대 1주택 판정${exclNote} — 종부세 기본공제 현행 12억원, 9·1 수정 정부안 ${live ? '실거주 14억원' : '비거주 12억원(8·3안의 9억 축소 철회)'} 적용.`);
   if (stat.one && anyJoint) rules.push(`1세대 1주택 부부 공동명의${exclNote} — 각자 지분별 개별납부(9·1 수정안: 1인당 ${live ? '9억' : '6억'}원 공제, 지분 안분 없음)와 1세대 1주택 특례(전체 합산 ${live ? '14억' : '12억'} 공제 + 고령·장기 세액공제)를 모두 계산해 유리한 쪽을 표시.`);
   if (!stat.one) rules.push(`다주택(실질 ${houses.length - stat.excluded}주택) — 종부세는 사람별 합산 과세. 정부안 기본공제는 4억 + 5억 × 거주주택 비중으로 계산(9·1 수정안에서도 유지, 공동명의 1주택 공제와 별개).`);
+  {
+    // 부부가 각각 단독명의로 보유(공동명의 아님) — 1세대1주택·공동명의 규정을 쓰지 않는 이유를 명시 (§12)
+    const rp = (c.ref[1] && c.ref[1].jong && c.ref[1].jong.mode === 'per-taxpayer') ? c.ref[1].jong.persons : [];
+    const me = rp.find(p => p.taxpayer === 'me'), sp = rp.find(p => p.taxpayer === 'spouse');
+    if (!stat.one && me && sp && !anyJoint) {
+      const pct = p => Math.round(((p.owner || {}).residentialValueRatio || 0) * 100);
+      rules.push(`부부가 각각 단독명의로 보유 — 세대 기준 ${houses.length}주택이므로 1세대 1주택(12·14억)이나 공동명의 1주택(6·9억) 규정이 아니라 각자 4억 + 5억 × 거주주택가액 비율로 공제합니다: 본인 ${pct(me)}% → ${won(me.deduct)}, 배우자 ${pct(sp)}% → ${won(sp.deduct)} (정부안 2027 기준).`);
+    }
+  }
   if (stat.temp2) rules.push('일시적 2주택 표시 — 처분기한 내 요건 충족을 전제로 1주택 지위를 유지한 계산입니다. 기한 경과 시 결과가 달라집니다.');
   if (c.inheritExp) rules.push(`상속주택 특례는 ${c.inheritExp.year}년부터 만료되어 그해부터 다주택 규칙(기본공제·공정시장가액비율)이 적용됩니다.`);
   // 2028 공정시장가액비율 — 실제 적용값에서 도출
@@ -1220,11 +1230,13 @@ function jongDetailRows(j, title) {
   if (j.pubSum <= j.threshold || j.base <= 0) {
     h += kvRow('공시가격 합계(지분 반영)', won(j.pubSum));
     h += kvRow('과세 기준(기본공제)', won(j.threshold) + ' 초과부터');
+    if (j.dedWhy) h += `<p class="subtle" style="margin:2px 0 8px">${esc(j.dedWhy)}</p>`;
     h += kvRow('종합부동산세', '과세 대상 아님', 'total');
     return h;
   }
   h += kvRow('공시가격 합계(지분 반영)', won(j.pubSum));
   h += kvRow('− 기본공제', '−' + won(j.deduct));
+  if (j.dedWhy) h += `<p class="subtle" style="margin:2px 0 8px">${esc(j.dedWhy)}</p>`;
   h += kvRow('× 공정시장가액비율', Math.round(j.fair * 100) + '%');
   h += kvRow('= 과세표준', won(j.base));
   h += kvRow('산출세액', won(j.gross));
