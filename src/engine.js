@@ -1237,7 +1237,41 @@ function thresholds(inp) {
     }))
   });
   const jointOne = stat.one && ['me', 'spouse'].every(k => houses.filter(h => shareOf(h, k) > 0).length === houses.length);
-  return { pubNow, current: mk(cur), reform: mk(ref), oneStatus: stat, oneLive, jointOne };
+
+  /* 납세자별 문턱 (2026-09-02): 종부세는 인별 과세이므로 다주택·부부 각 1채는 세대 합이 아니라
+     각 납세자의 '지분 공시가격 합계 대비 본인 공제액'이 과세 시작점이다. 유형 판정은 holdCalcYear와 동일. */
+  function personThr(scen, year) {
+    const P = jongParams(year, scen);
+    const asOf = `${year}-06`;
+    const st = oneStatusOf(houses, 0, asOf);
+    const mh = mainHouseOf(houses, asOf);
+    const hhLive = mh ? liveNowOf(mh.livePeriods, asOf) : false;
+    const exIds = specialExcludedIds(houses, asOf);
+    const core = houses.filter(h => !exIds.has(h.id));
+    const both = ['me', 'spouse'].every(k => houses.filter(h => shareOf(h, k) > 0).length === houses.length);
+    const out = [];
+    for (const k of ['me', 'spouse']) {
+      const list = houses.filter(h => shareOf(h, k) > 0);
+      if (!list.length) continue;
+      const ps = list.reduce((s, h) => s + pubOf(h) * shareOf(h, k), 0);
+      const lv = list.filter(h => liveNowOf(h.livePeriods, asOf)).reduce((s, h) => s + pubOf(h) * shareOf(h, k), 0);
+      const ratio = ps > 0 ? lv / ps : 0;
+      const sole = st.one && (core.length ? core : houses).every(h => shareOf(h, k) >= 0.999);
+      let type, deduct;
+      if (st.one && both) { type = 'jointOneIndiv'; deduct = P.dedJointOneIndiv(liveNowOf(houses[0].livePeriods, asOf)); }
+      else if (sole) { type = 'one'; deduct = P.dedOne(hhLive); }
+      else { type = 'multi'; deduct = P.dedMulti(ratio); }
+      out.push({ key: k, type, dedType: DED_TYPE[type], pubShare: ps, ratio, deduct, market: deduct / RULES.officialRatio,
+        pct: ps > 0 ? (deduct / ps - 1) : null, over: ps > deduct });
+    }
+    return out;
+  }
+  const pc = personThr('current', inp.assumptions.baseYear);
+  const pr = personThr('reform', inp.assumptions.baseYear + 2);
+  const persons = pc.map(p => ({ key: p.key, label: p.key === 'spouse' ? '배우자' : '본인', pubShare: p.pubShare,
+    current: p, reform: pr.find(x => x.key === p.key) || p }));
+  const mode = jointOne ? 'joint-one' : (stat.one && persons.length === 1 ? 'one' : 'per-taxpayer');
+  return { pubNow, current: mk(cur), reform: mk(ref), oneStatus: stat, oneLive, jointOne, mode, persons };
 }
 
 /** 공시가격 ±5% 민감도 — 기준·하향·상향 3개 시나리오 */

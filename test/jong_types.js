@@ -194,6 +194,33 @@ console.log('\n[경계] 남편 A 단독(거주) + 아내 상속주택 B 단독 �
   T('상속 특례 만료 후(2030) — 남편 9억(거주 100%) · 아내 4억', near(late.me, 9 * 억) && near(late.spouse, 4 * 억) && late.meType === 'multi', `${f(late.me)}/${f(late.spouse)}`);
 }
 
+/* ── 납세자별 과세 문턱 (thresholds) ── */
+console.log('\n[문턱] 종부세 인별 과세 — 납세자별 문턱 표시');
+{
+  const byKey = (thr, k) => thr.persons.find(p => p.key === k);
+  // 부부 각 1채, A 거주: 남편 12억 보유 → 현행 9억 / 개편 9억(거주 100%), 아내 9억 보유 → 현행 9억 / 개편 4억
+  const th = E.thresholds(mkPair(true, false));
+  T('부부 각 1채 — mode per-taxpayer', th.mode === 'per-taxpayer', th.mode);
+  const me = byKey(th, 'me'), sp = byKey(th, 'spouse');
+  T('남편 문턱 현행 9억 · 개편 9억(비율 100%)', me.current.deduct === 9 * 억 && me.reform.deduct === 9 * 억 && near(me.reform.ratio, 1, 1e-9), `${f(me.current.deduct)}/${f(me.reform.deduct)}`);
+  T('아내 문턱 현행 9억 · 개편 4억(비율 0%)', sp.current.deduct === 9 * 억 && sp.reform.deduct === 4 * 억 && sp.reform.ratio === 0, `${f(sp.current.deduct)}/${f(sp.reform.deduct)}`);
+  T('남편 지분 공시 12억 → 개편 문턱 이미 초과', near(me.pubShare, 12 * 억) && me.reform.over === true, JSON.stringify(me.reform));
+  T('아내 지분 공시 9억 → 개편 문턱(4억) 초과', near(sp.pubShare, 9 * 억) && sp.reform.over === true && sp.current.over === false, JSON.stringify(sp.reform));
+  T('유형 표기 multi', me.reform.type === 'multi' && me.reform.dedType === 'MULTI_HOME_HOUSEHOLD_INDIVIDUAL_OWNER', me.reform.dedType);
+  // 1인 2주택 10+10, A 거주 → 개편 6.5억, 현재 대비 상승률 = 6.5/20 − 1 (이미 초과)
+  const one2 = E.thresholds(inputOf([house(Object.assign({ id: 'A', official: 10, livePeriods: LIVE }, ME)), house(Object.assign({ id: 'B', official: 10, acqDate: '2019-03' }, ME))]));
+  T('1인 2주택 — 납세자 1명 · 개편 문턱 6.5억', one2.persons.length === 1 && near(one2.persons[0].reform.deduct, 6.5 * 억), f(one2.persons[0].reform.deduct));
+  // 1주택 단독·공동명의는 기존 필드 유지
+  const t1 = E.thresholds(inputOf([house(Object.assign({ official: 20, livePeriods: LIVE }, ME))]));
+  T('1세대1주택 단독 — mode one · 개편 14억 (기존 필드)', t1.mode === 'one' && t1.reform.pub === 14 * 억 && byKey(t1, 'me').reform.deduct === 14 * 억, `${t1.mode} ${f(t1.reform.pub)}`);
+  const tj = E.thresholds(inputOf([house(Object.assign({ official: 20 }, JOINT(50, 50)))], { situation: 'one_away' }));
+  T('공동명의 비거주 — mode joint-one · 실효 문턱 12억 · 인별 공제 6억', tj.mode === 'joint-one' && tj.reform.pub === 12 * 억 && byKey(tj, 'me').reform.deduct === 6 * 억, `${tj.mode} ${f(tj.reform.pub)}`);
+  // 상속 경계: 남편 1세대1주택자(14억), 아내 상속주택만(4억)
+  const INH = { temp2: false, inherit: true, lowLocal: false, rental: false, popDecline: false };
+  const te = E.thresholds(inputOf([house(Object.assign({ id: 'A', official: 12, livePeriods: LIVE }, ME)), house(Object.assign({ id: 'B', official: 8, acqDate: '2024-03', acqCause: 'inherit', flags: INH, inheritDate: '2024-03' }, SP))]));
+  T('상속 경계 문턱 — 남편 one 14억 · 아내 multi 4억', byKey(te, 'me').reform.type === 'one' && byKey(te, 'me').reform.deduct === 14 * 억 && byKey(te, 'spouse').reform.deduct === 4 * 억, `${byKey(te, 'me').reform.type} ${f(byKey(te, 'me').reform.deduct)} / ${f(byKey(te, 'spouse').reform.deduct)}`);
+}
+
 /* ── 검증 표 출력 (§13 보고용) ── */
 console.log('\n| 보유상황 | 남편 공제 | 아내 공제 | 적용 규칙 | 결과 |');
 console.log('|---|---:|---:|---|---|');

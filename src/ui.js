@@ -17,8 +17,9 @@ const CONFIG = {
   GA4_ID: ''               // GA4 측정 ID 입력 시에만 이벤트 전송 (이벤트명·유입경로만, 입력값은 전송하지 않음)
 };
 const VERSION = {
-  current: 'v3.2.1', updated: '2026-09-02',
+  current: 'v3.2.2', updated: '2026-09-02',
   log: [
+    ['v3.2.2', '2026-09-02', '과세 전환점을 납세자별 문턱으로 표시 — 다주택·부부 각 1채는 세대 합이 아니라 각자 지분 공시가격 대비 본인 공제(4억 + 5억 × 거주주택가액 비율) 기준'],
     ['v3.2.1', '2026-09-02', '종부세 보유형태 4분류 검증(1세대1주택 단독 / 부부 공동명의 1주택 / 부부 각 1채 / 일반 다주택) — 납세자별 소유·지분가액 데이터와 공제 유형·산출 사유를 상세 산식에 표시, 회귀테스트 63건 추가'],
     ['v3.2.0', '2026-09-02', '9·1 수정 세제개편 정부안 반영 — 비거주 1주택 종부세 기본공제 12억 유지(9억 축소 철회), 비거주 부부 공동명의 개별납부 1인당 6억(4억→6억)·실거주 9억 유지, 세부담상한 150% 유지(200% 철회), 공동명의 1주택/일반 다주택 공제 로직 분리, 정책 기준일·설명 갱신'],
     ['v3.1.0', '2026-08-15', '공동명의 명의자별 세액 표시, 주택 유형(연립·다세대 등) 선택, 최대 15채 입력, 상생임대 간편 반영, 재개발·재건축/등록임대 안내 강화'],
@@ -925,6 +926,25 @@ function thresholdHTML(c) {
     }).join('')}</tbody>
     </table></div>
     <p class="subtle">공시가격이 매년 같은 비율로 오른다는 단순 가정입니다. 실제 고시가격·정책 변경에 따라 달라집니다.</p>` : '';
+  if (t.mode === 'per-taxpayer' && t.persons && t.persons.length) {
+    // 종부세는 인별 과세 — 다주택·부부 각 1채는 세대 합이 아니라 납세자별 문턱을 보여준다 (2026-09-02)
+    const typeL = { one: '1세대 1주택', jointOneIndiv: '공동명의 개별납부', multi: '4억 + 5억 × 거주주택가액 비율' };
+    const cell = (p, m) => `${eok(m.deduct)} 초과<br><span class="subtle">${m.over ? '<b style="color:var(--up)">이미 초과</b>' : (Math.round(m.pct * 100) === 0 ? '문턱과 같음 (조금만 올라도 과세)' : `+${Math.round(m.pct * 100)}% 상승 시`)}</span>`;
+    const rows = t.persons.map(p => `<tr>
+        <td><b>${p.label}</b><br><span class="subtle">${typeL[p.reform.type] || ''}${p.reform.type === 'multi' ? ` (거주 비율 ${Math.round(p.reform.ratio * 100)}%)` : ''}</span></td>
+        <td>${eok(p.pubShare)}</td>
+        <td>${cell(p, p.current)}</td>
+        <td>${cell(p, p.reform)}<br><span class="subtle">시세 ≈ ${eok(p.reform.market)}</span></td></tr>`).join('');
+    return `<div class="card">
+      <h2>언제 달라지나 — 과세 전환점 <span class="stat info">납세자별 문턱</span></h2>
+      <p class="hint">종부세는 <b>사람별로</b> 과세되므로 문턱도 납세자별로 봅니다. 각자 보유 지분의 공시가격 합계가 본인 기본공제(현행 9억 · 정부안 4억 + 5억 × 거주주택가액 비율)를 넘는 지점이 과세 시작점입니다. 세대 합계 <b>${eok(pubNow)}</b>를 한 문턱과 비교하지 않습니다.</p>
+      <div class="tblwrap"><table>
+        <thead><tr><th>납세자 · 적용 규칙</th><th>지분 공시가격(현재)</th><th>현행 문턱 ${scenBadge('current')}</th><th>정부안 문턱 ${scenBadge('reform')}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <p class="subtle">정부안 공제는 거주주택가액 비율에 따라 달라지므로, 거주 주택을 바꾸거나 주택을 처분하면 문턱도 움직입니다. 연도별 인별 상세는 ‘어떻게 계산했나’에서 확인하세요.</p>
+    </div>`;
+  }
   return `<div class="card">
     <h2>언제 달라지나 — 과세 전환점${t.jointOne ? ' <span class="stat info">유리한 납부방식 기준 실효 문턱</span>' : ''}</h2>
     <p class="hint">현재 공시가격 합계 <b>${eok(pubNow)}</b> 기준, 종부세 과세가 시작되는 지점입니다.${t.jointOne ? ' 부부 공동명의 1주택은 인별 과세와 공동명의 특례 중 <b>유리한 방식</b>을 고를 수 있어, 둘 중 늦게 시작되는 쪽이 실효 문턱입니다.' : ''}${t.oneStatus.one && c.inp.houses.length === 1 && Object.values(c.inp.houses[0].shares).filter(v => v > 0).length > 1 ? ' 부부 공동명의는 개별납부·특례 중 유리한 쪽 기준의 실효 문턱입니다.' : ''}</p>
@@ -1027,7 +1047,10 @@ function opinionHTML(c) {
   let thrLine = '';
   if (c.thr) {
     const t = c.thr;
-    if (r26.jong.total <= 0 && r28.jong.total <= 0) {
+    if (t.mode === 'per-taxpayer' && t.persons && t.persons.length) {
+      const parts = t.persons.map(p => `${p.label} 지분 공시 ${eok(p.pubShare)} vs 문턱 현행 ${eok(p.current.deduct)}·정부안 ${eok(p.reform.deduct)}${p.reform.type === 'multi' ? `(거주 비율 ${Math.round(p.reform.ratio * 100)}%)` : ''} → ${p.reform.over ? '정부안 과세 구간' : `+${Math.round(p.reform.pct * 100)}% 상승 시 과세`}`);
+      thrLine = `종부세는 사람별 과세이므로 문턱도 납세자별로 봅니다: ${parts.join(' / ')}. 세대 합계를 한 문턱과 비교하지 않습니다.`;
+    } else if (r26.jong.total <= 0 && r28.jong.total <= 0) {
       thrLine = `현재는 세율보다 <b>과세 문턱</b>이 핵심입니다. 공시가격 합계 ${eok(pubNow)}는 현행 기준 ${eok(t.current.pub)}, 정부안 기준 ${eok(t.reform.pub)}에 미치지 않으므로, 공정시장가액비율이 올라도 ‘공시가격 − 기본공제’가 0 이하이면 종부세 과세표준은 계속 0원입니다.`;
     } else {
       thrLine = `과세 시작점은 현행 공시가격 ${eok(t.current.pub)} 초과, 정부안 ${eok(t.reform.pub)} 초과입니다. 시세로는 약 ${eok(t.reform.market)} 수준(현실화율 69% 단순 가정)입니다.`;

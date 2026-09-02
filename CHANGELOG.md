@@ -1,5 +1,10 @@
 # 닥터마빈의 부동산 세금 시뮬레이터 — 변경 이력
 
+## v3.2.2 (2026-09-02) — 납세자별 과세 문턱 표시
+- thresholds(): `mode`(one / joint-one / per-taxpayer)와 `persons[]`(납세자별 지분 공시가격·적용 규칙·현행/정부안 공제·현재 대비 상승률) 추가 — 1주택·공동명의 기존 필드 유지
+- UI: 다주택·부부 각 1채는 '언제 달라지나' 카드와 심층 분석 문턱 문장을 납세자별로 표시(세대 합계 문턱 표시 제거)
+- test/jong_types.js 문턱 10건 추가(총 79건)
+
 ## v3.2.1 (2026-09-02) — 종부세 보유형태 4분류 검증·설명
 - 검증: 1세대1주택 단독(14/12억) · 부부 공동명의 1주택(각 9/6억 + 특례 비교) · 부부 각 1채(각자 4억 + 5억 × 거주주택가액비율) · 1인 다주택(비율 50% → 6.5억, 75% → 7.75억) · 복합 보유(남편 A+B50%, 아내 B50%) — 기존 엔진이 지시서 표와 전부 일치, 계산 로직 변경 없음
 - 엔진: 납세자 단위 데이터 `owner`(ownedHouses·ownershipShare·ownedOfficialValue·residentialOwnedValue·totalOwnedValue·residentialValueRatio·taxpayerDeduction), 세대 단위 `jong.household`(householdHouseCount·isHouseholdOneHome·residenceHouseId), 공제 유형 상수 `DED_TYPE`(SINGLE_OWNER_ONE_HOUSEHOLD_HOME / JOINT_OWNER_ONE_HOUSEHOLD_HOME / MULTI_HOME_HOUSEHOLD_INDIVIDUAL_OWNER)과 산출 사유 `dedWhy` 추가 (표시 전용)
