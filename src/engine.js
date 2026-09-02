@@ -1,20 +1,33 @@
 'use strict';
 /* =====================================================================
    부동산 세금 진단 시뮬레이터 v2.0 — 계산 엔진 (순수 계산, DOM 없음)
-   기준: 2026년 현행법(확정) + 2026.8.3 「2026년 세제개편안」(정부안·국회 미확정)
+   기준: 2026년 현행법(확정) + 2026.9.1 국무회의 수정 확정 「2026년 세제개편안」(9·1 수정 정부안·국회 심의 전)
+   정책 이력: 8·3 발표안 → 9·1 수정안 (RULES.policyHistory 참조)
    PRD v2.0 (2026-08-09) 기반. 규칙은 RULES에 버전으로 관리한다.
    ===================================================================== */
 
 const 억 = 1e8, 만 = 1e4;
 
 const RULES = {
-  version: 'rules-2026.08.09-r3',
-  reviewedAt: '2026-08-09',
+  version: 'rules-2026.09.01-r1',
+  reviewedAt: '2026-09-01',
+  policyDate: '2026-09-01',          // 정책 기준일 — 국회 심의·시행령 확정 시 이 상수와 policyHistory를 갱신한다
   officialRatio: 0.69, // 2026년 공동주택 공시가격 현실화율(참고값) — 시세→공시 추정에만 사용
   policy: {
     current: { code: 'current', label: '현행 확정법', badge: '현행법 · 확정', status: 'enacted' },
-    reform:  { code: 'reform',  label: '8·3 정부안',  badge: '정부안 · 국회 심의 전', status: 'draft_proposal' }
+    reform:  {
+      code: 'reform', label: '9·1 수정 정부안', badge: '9·1 수정 정부안 · 국회 심의 전', status: 'draft_proposal',
+      decidedAt: '2026-09-01',
+      note: '2026년 9월 1일 국무회의에서 수정 확정된 정부 세법개정안을 반영합니다. 아직 국회 심의 전으로 최종 법률은 변경될 수 있습니다.'
+    }
   },
+  // 정책 변경 이력 — 과거 자료는 삭제하지 않고 누적 관리
+  policyHistory: [
+    { date: '2026-08-03', name: '8·3 세제개편안(정부 발표)', status: 'superseded',
+      items: ['비거주 1세대1주택 종부세 기본공제 12억 → 9억 축소안', '부부 공동명의 1주택 개별납부 공제 1인당 4억(비거주)/9억(실거주)', '종부세 세부담상한 150% → 200% 상향안', '실거주 1주택 기본공제 14억, 공정시장가액비율 70/80%, 세액공제 800/600만원 한도, 장특공제 20/10억 한도'] },
+    { date: '2026-09-01', name: '9·1 수정 정부안(국무회의 확정)', status: 'draft_proposal',
+      items: ['비거주 1세대1주택 종부세 기본공제 12억원 유지(9억 축소안 철회)', '비거주 부부 공동명의 1주택 개별납부 공제 1인당 6억원(4억 → 6억, 부부 합산 12억)', '실거주 부부 공동명의 1인당 9억원 유지(부부 합산 18억)', '종부세 세부담상한 150% 유지(주택분·토지분 200% 상향안 철회)', '그 외 8·3 발표안 항목은 유지'] }
+  ],
   // r2 (2026-08-09) P0 수정 반영:
   //   P0-1 종부세 세액공제 800/600만원 한도 (reform)
   //   P0-2 장특공제 20/10억원 한도 (reform)
@@ -28,6 +41,7 @@ const RULES = {
   //   비조정 또는 1세대1주택자(특례 신청 포함)는 70% 유지 (문답자료 p.45)
   sources: [
     '기획재정부 「2026년 세제개편안」 상세본·문답자료 (2026.8.3)',
+    '기획재정부 「2026년 세법개정안」 국무회의 수정 확정 — 비거주 1주택 기본공제 12억 유지, 비거주 부부 공동명의 1인당 6억, 세부담상한 150% 유지 (2026.9.1)',
     '국토교통부 「2026년 공동주택 공시가격 결정·공시」',
     '국세청 증여세 항목별 설명 · 증여재산의 평가',
     '상속세 및 증여세법 제53조, 소득세법 제97조의2 · 제88조 10호',
@@ -176,7 +190,7 @@ function marketAt(h, year, inp) {
 }
 
 /* =====================================================================
-   1. 재산세 (지방세 — 2026년 현행, 8·3 개편 대상 아님)
+   1. 재산세 (지방세 — 2026년 현행, 세제개편안(국세) 대상 아님)
    ===================================================================== */
 const PROP = {
   fairOne: [[3 * 억, 0.43], [6 * 억, 0.44], [Infinity, 0.45]], // 1세대1주택 공정시장가액비율
@@ -234,6 +248,7 @@ function jongParams(year, scen) {
       key: 'current', label: '현행',
       dedOne: () => 12 * 억,
       dedMulti: () => 9 * 억,
+      dedJointOneIndiv: () => 9 * 억,       // 현행: 부부 공동명의 1주택 개별납부 = 일반 납세자 공제 9억
       fair: () => 0.60,
       table: n => n >= 3 ? JR_HEAVY : JR_NORMAL,
       creditMode: 'hold', burdenCap: 1.50
@@ -241,25 +256,30 @@ function jongParams(year, scen) {
   }
   if (year === 2027) {
     return {
-      key: 'r2027', label: '정부안 2027',
-      dedOne: live => live ? 14 * 억 : 9 * 억,
+      key: 'r2027', label: '수정 정부안 2027',
+      // 9·1 수정안: 비거주 1주택 기본공제 12억 유지(8·3안의 9억 축소 철회), 실거주 14억
+      dedOne: live => live ? 14 * 억 : 12 * 억,
+      // 일반 다주택(8·3안 유지): 4억 + 5억 × 거주주택가액 비중 — 공동명의 1주택과는 별도 규칙
       dedMulti: ls => 4 * 억 + 5 * 억 * ls,
+      // 9·1 수정안: 부부 공동명의 1주택 개별납부 — 납세의무자 1인당 실거주 9억 / 비거주 6억 (지분 안분 아님)
+      dedJointOneIndiv: live => live ? 9 * 억 : 6 * 억,
       fair: () => 0.70,
       // PRD §8 P0: 2027년 3주택 이상은 중과 체계(최고 5%) 유지, 1·2주택만 일원화 중간 단계
       table: n => n >= 3 ? JR_HEAVY : JR_2027,
-      creditMode: 'max', burdenCap: 2.00
+      creditMode: 'max', burdenCap: 1.50   // 9·1 수정안: 200% 상향안 철회 → 현행 150% 유지
     };
   }
   return {
-    key: 'r2028', label: '정부안 2028~',
-    dedOne: live => live ? 14 * 억 : 9 * 억,
-    dedMulti: ls => 4 * 억 + 5 * 억 * ls,
+    key: 'r2028', label: '수정 정부안 2028~',
+    dedOne: live => live ? 14 * 억 : 12 * 억,          // 9·1 수정안: 비거주 12억 유지
+    dedMulti: ls => 4 * 억 + 5 * 억 * ls,               // 일반 다주택(8·3안 유지)
+    dedJointOneIndiv: live => live ? 9 * 억 : 6 * 억,   // 9·1 수정안: 공동명의 1주택 개별납부 1인당
     // 정부안 문답자료 p.45: 3주택 이상 또는 조정지역 주택 보유자(단, 1세대1주택자 제외) → 80%,
     // 그 외 (1세대1주택자, 지방 1·2주택) → 70%.
     // 부부공동명의 개별납부는 각자 인별 판정 시 1세대1주택자가 아니므로 조정지역 시 80% 적용.
     fair: (n, hasAdj, isOne) => isOne ? 0.70 : ((n >= 3 || hasAdj) ? 0.80 : 0.70),
     table: () => JR_2028,
-    creditMode: 'live', burdenCap: 2.00
+    creditMode: 'live', burdenCap: 1.50   // 9·1 수정안: 200% 상향안 철회 → 현행 150% 유지
   };
 }
 
@@ -288,7 +308,12 @@ function jongbuPerson(o) {
     creditRate: 0, credit: 0, beforeCap: 0, capped: 0, tax: 0, rural: 0, total: 0
   };
   if (o.pubSum <= 0) return d;
-  const ded = o.isOne ? P.dedOne(!!o.oneLive) : P.dedMulti(Math.max(0, Math.min(1, o.liveShare || 0)));
+  // 납세자 유형별 기본공제 — 공동명의 1주택 개별납부(jointOneIndiv)는 일반 다주택(dedMulti)과 분리
+  const taxpayerType = o.jointOneIndiv ? 'jointOneIndiv' : (o.isOne ? 'one' : 'multi');
+  const ded = taxpayerType === 'jointOneIndiv' ? P.dedJointOneIndiv(!!o.oneLive)
+    : taxpayerType === 'one' ? P.dedOne(!!o.oneLive)
+    : P.dedMulti(Math.max(0, Math.min(1, o.liveShare || 0)));
+  d.taxpayerType = taxpayerType;
   d.deduct = ded; d.threshold = ded;
   if (o.pubSum <= ded) return d;
 
@@ -529,7 +554,7 @@ function holdCalcYear(inp, scen, year, prevMap, opt = {}) {
     const indiv = tps.map(t => {
       const r = jongbuPerson({
         year, scen, pubSum: t.pubSum, houseCount: t.houseCount, hasAdj: t.hasAdj,
-        isOne: false, oneLive: false, liveShare: t.liveShare,
+        isOne: false, jointOneIndiv: true, oneLive, liveShare: t.liveShare,   // 9·1: 1인당 9억/6억 공제, 세액공제·70% FMV는 종전대로 미적용
         age: t.age, holdY, liveY,
         aggPBase: t.aggPBase, avgFair: t.avgFair, propMainPaid: t.propMainPaid,
         prevTotal: prevOf(`indiv|${t.key}`)
@@ -1121,7 +1146,7 @@ function thresholds(inp) {
     if (stat.one && both) {
       const shares = ['me', 'spouse'].map(k => shareOf(houses[0], k)).filter(s => s > 0);
       const live = liveNowOf(houses[0].livePeriods, asOf);
-      const indivStart = Math.min.apply(null, shares.map(s => P.dedMulti(live ? 1 : 0) / s));
+      const indivStart = Math.min.apply(null, shares.map(s => P.dedJointOneIndiv(live) / s)); // 9·1: 1인당 9억/6억 ÷ 지분
       const specialStart = P.dedOne(live);
       return Math.max(indivStart, specialStart);
     }
@@ -1387,7 +1412,7 @@ function conclusionOf(inp, curRows, refRows, valid, sens) {
     return {
       code: 'NO_CURRENT_IMPACT',
       head: '현재 입력 기준, 종합부동산세 과세 대상이 아닙니다',
-      sub: '현행법과 8·3 정부안 모두에서 과세 문턱(기본공제)에 미치지 않습니다.', diff, extra
+      sub: '현행법과 9·1 수정 정부안 모두에서 과세 문턱(기본공제)에 미치지 않습니다.', diff, extra
     };
   }
   if (curJong <= 0 && refJong > 0) {

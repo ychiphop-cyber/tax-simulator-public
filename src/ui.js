@@ -12,13 +12,14 @@ const CONFIG = {
   BLOG_HOME: 'https://m.blog.naver.com/marbin1982',
   BLOG_QNA_URL: 'https://blog.naver.com/marbin1982/224374566862', // 질문 허브 글 — 비우면 질문 CTA 자동 숨김
   YOUTUBE_CHANNEL: 'https://youtube.com/channel/UCAQphoJnr83PI1a8JUAlecQ?si=tIWvMYcCiA1r2iFD',
-  YOUTUBE_FEATURE_URL: '', // 8·3 해설 영상 업로드 후 URL 입력 — 비어 있으면 영상 CTA 숨김
+  YOUTUBE_FEATURE_URL: '', // 세제개편 해설 영상 업로드 후 URL 입력 — 비어 있으면 영상 CTA 숨김
   CASE_FORM_URL: 'https://docs.google.com/forms/d/e/1FAIpQLSfpULfPKYqwhMPWEYEuwWkCtd_r29XFx9tCutGoRcPd0bO9Lw/viewform', // '내 사례 남기기' Google Form (2026-08-13 연결)
   GA4_ID: ''               // GA4 측정 ID 입력 시에만 이벤트 전송 (이벤트명·유입경로만, 입력값은 전송하지 않음)
 };
 const VERSION = {
-  current: 'v3.1.0', updated: '2026-08-15',
+  current: 'v3.2.0', updated: '2026-09-02',
   log: [
+    ['v3.2.0', '2026-09-02', '9·1 수정 세제개편 정부안 반영 — 비거주 1주택 종부세 기본공제 12억 유지(9억 축소 철회), 비거주 부부 공동명의 개별납부 1인당 6억(4억→6억)·실거주 9억 유지, 세부담상한 150% 유지(200% 철회), 공동명의 1주택/일반 다주택 공제 로직 분리, 정책 기준일·설명 갱신'],
     ['v3.1.0', '2026-08-15', '공동명의 명의자별 세액 표시, 주택 유형(연립·다세대 등) 선택, 최대 15채 입력, 상생임대 간편 반영, 재개발·재건축/등록임대 안내 강화'],
     ['v3.0.4', '2026-08-13', '긴급 수정 — 비거주 결과 크래시(futureFrom), 미래 입주 예정 상태 구분, 연도별 실효 문턱(공동명의 max), 중첩 거주기간 병합, PDF 페이지 분할·속도 개선'],
     ['v3.0.3', '2026-08-13', '결과 하단 재배치(PDF 저장 → 내 사례 → 유튜브 → 오류·개선 → 근거와 한계) 및 문구 개선'],
@@ -517,7 +518,7 @@ function renderStep6() {
     <div class="sumcard"><div class="shead"><b>계산 목적</b><button class="iconb" data-goto="4">수정</button></div>
       <div class="sbody"><b>${ppTxt}</b>${ppDetail}</div></div>
     <div class="sumcard"><div class="shead"><b>가정</b><button class="iconb" data-goto="5">수정</button></div>
-      <div class="sbody">${a.policyView === 'both' ? '현행 + 8·3 정부안 비교' : a.policyView === 'current' ? '현행법만' : '8·3 정부안만'} ·
+      <div class="sbody">${a.policyView === 'both' ? '현행 + 9·1 수정 정부안 비교' : a.policyView === 'current' ? '현행법만' : '9·1 수정 정부안만'} ·
       시세 상승 연 ${a.marketGrowth}% · 공시 상승 연 ${a.officialGrowth}% · 도시지역분 ${a.urban ? '포함' : '제외'} ·
       재산세 1주택 특례비율 2027~ ${a.propFairKeep ? '유지 가정' : '종료(60%) 가정'}</div></div>`;
 
@@ -577,7 +578,7 @@ function renderAll() {
    ===================================================================== */
 const scenBadge = scen => scen === 'current'
   ? '<span class="stat info">현행법 · 확정</span>'
-  : '<span class="stat chk">정부안 · 국회 심의 전</span>';
+  : `<span class="stat chk">${RULES.policy.reform.badge}</span>`;
 const estBadge = '<span class="stat est">추정</span>';
 
 function svgEl(t, a = {}) { const e = document.createElementNS('http://www.w3.org/2000/svg', t); for (const k in a) e.setAttribute(k, a[k]); return e; }
@@ -713,7 +714,7 @@ function ytCtaHTML() {
   if (!url) return '';
   return `<div class="cta" style="border-color:var(--line);background:var(--surface)">
     <h3 style="color:var(--ink)">세제개편안 핵심 해석 영상</h3>
-    <p>8·3 세제개편안의 핵심 내용과 실제 영향은 유튜브 「닥터마빈의 재테크 에세이」에서 이어서 설명드립니다.</p>
+    <p>2026 세제개편안(9·1 수정 정부안)의 핵심 내용과 실제 영향은 유튜브 「닥터마빈의 재테크 에세이」에서 이어서 설명드립니다.</p>
     <a class="btn" data-ev="youtube_click" href="${esc(url)}" target="_blank" rel="noopener">${CONFIG.YOUTUBE_FEATURE_URL ? '해석 영상 보기 →' : '유튜브에서 보기 →'}</a>
   </div>`;
 }
@@ -843,9 +844,13 @@ function driverText(c) {
   const live = mainH && liveNowOf(mainH.livePeriods, opAsOf);
   const futureFrom = mainH ? futureMoveIn(mainH.livePeriods, opAsOf) : null;
   const items = [];
-  if (stat.one && live) items.push('기본공제 12억 → <b>14억원</b>(실거주 1주택) — 과세 문턱 상향(감세 요인)');
-  if (stat.one && !live) items.push('기본공제 12억 → <b>9억원</b>(비거주 1주택) — 이번 개편에서 부담이 가장 크게 늘어나는 유형');
-  if (!stat.one) items.push('다주택 인별 기본공제 9억 → <b>4억 + 5억 × 거주주택 비중</b> — 거주 비중이 낮을수록 불리');
+  const anyJoint = houses.some(h => num((h.shares || {}).me) > 0 && num((h.shares || {}).spouse) > 0);
+  if (stat.one && live) items.push('실거주 1주택 기본공제 12억 → <b>14억원</b> — 과세 문턱 상향(감세 요인)');
+  if (stat.one && !live) items.push('비거주 1주택 기본공제는 <b>12억원 유지</b> — 8·3 정부안의 9억원 축소안이 9·1 수정안에서 철회됐습니다');
+  if (stat.one && anyJoint && !live) items.push('비거주 부부 공동명의 1주택은 개별납부 시 1인당 공제 4억 → <b>6억원</b>으로 수정(9·1, 부부 합산 12억) — 특례 신청과 비교해 유리한 쪽 적용');
+  if (stat.one && anyJoint && live) items.push('실거주 부부 공동명의 1주택은 개별납부 시 1인당 <b>9억원</b> 유지(부부 합산 18억) — 특례 신청(14억 + 세액공제)과 비교해 유리한 쪽 적용');
+  if (!stat.one) items.push('다주택 인별 기본공제 9억 → <b>4억 + 5억 × 거주주택 비중</b> — 거주 비중이 낮을수록 불리 (9·1 수정안에서도 유지)');
+  items.push('종부세 세부담상한 150% → 200% 상향안 <b>철회</b> — 현행 150% 유지(9·1 수정안)');
   const hasAdj = houses.some(h => adjYes(h.adjNow));
   if (houses.length >= 3 || (houses.length >= 2 && hasAdj)) items.push('공정시장가액비율 60% → 70%(2027) → <b>80%</b>(2028, 3주택 이상·조정 2주택) — 과세표준 확대(증세 요인)');
   else items.push('공정시장가액비율 60% → <b>70%</b>(2027~) — 과세표준 확대(증세 요인)');
@@ -856,7 +861,7 @@ function driverText(c) {
 function compareChartHTML(c) {
   return `<div class="card">
     <h2>연도별 보유세 비교 ${scenBadge('reform')}</h2>
-    <p class="hint">같은 입력을 현행 확정법과 8·3 정부안(국회 심의 전)에 각각 적용한 결과입니다. 2026년은 두 시나리오가 같습니다.</p>
+    <p class="hint">같은 입력을 현행 확정법과 9·1 수정 정부안(국회 심의 전)에 각각 적용한 결과입니다. 2026년은 두 시나리오가 같습니다.</p>
     <div class="chart-head"><div class="lgs" id="lgCmp"></div></div>
     <div class="chart" id="chartCmp"></div>
     <p class="subtle">정부안·개인별 사실관계에 따라 실제 결과는 달라질 수 있습니다.</p>
@@ -979,9 +984,9 @@ function opinionHTML(c) {
   // 2 적용 규칙 — 실제 계산에 적용된 분기만 노출 (P2-1)
   const rules = [];
   const exclNote = stat.excluded > 0 ? ` (특례주택 ${stat.excluded}채는 주택 수 판정에서 제외)` : '';
-  if (stat.one && !anyJoint) rules.push(`1세대 1주택 판정${exclNote} — 종부세 기본공제 현행 12억원, 정부안 ${live ? '실거주 14억원' : '비거주 9억원'} 적용.`);
-  if (stat.one && anyJoint) rules.push(`1세대 1주택 부부 공동명의${exclNote} — 각자 지분별 개별납부와 1세대 1주택 특례(전체 합산 + 고령·장기 세액공제)를 모두 계산해 유리한 쪽을 표시.`);
-  if (!stat.one) rules.push(`다주택(실질 ${houses.length - stat.excluded}주택) — 종부세는 사람별 합산 과세. 정부안 기본공제는 4억 + 5억 × 거주주택 비중으로 계산.`);
+  if (stat.one && !anyJoint) rules.push(`1세대 1주택 판정${exclNote} — 종부세 기본공제 현행 12억원, 9·1 수정 정부안 ${live ? '실거주 14억원' : '비거주 12억원(8·3안의 9억 축소 철회)'} 적용.`);
+  if (stat.one && anyJoint) rules.push(`1세대 1주택 부부 공동명의${exclNote} — 각자 지분별 개별납부(9·1 수정안: 1인당 ${live ? '9억' : '6억'}원 공제, 지분 안분 없음)와 1세대 1주택 특례(전체 합산 ${live ? '14억' : '12억'} 공제 + 고령·장기 세액공제)를 모두 계산해 유리한 쪽을 표시.`);
+  if (!stat.one) rules.push(`다주택(실질 ${houses.length - stat.excluded}주택) — 종부세는 사람별 합산 과세. 정부안 기본공제는 4억 + 5억 × 거주주택 비중으로 계산(9·1 수정안에서도 유지, 공동명의 1주택 공제와 별개).`);
   if (stat.temp2) rules.push('일시적 2주택 표시 — 처분기한 내 요건 충족을 전제로 1주택 지위를 유지한 계산입니다. 기한 경과 시 결과가 달라집니다.');
   if (c.inheritExp) rules.push(`상속주택 특례는 ${c.inheritExp.year}년부터 만료되어 그해부터 다주택 규칙(기본공제·공정시장가액비율)이 적용됩니다.`);
   // 2028 공정시장가액비율 — 실제 적용값에서 도출
@@ -1101,7 +1106,7 @@ function jointHTML(c) {
     <div class="warnbox"><b>명의 변경은 절감액보다 비용을 먼저 보세요.</b><br>${j.warnings.map(w => '· ' + esc(w)).join('<br>')}</div>`;
   }
   return `<div class="card"><h2>명의에 따라 — 공동명의 비교</h2>
-    <p class="hint">종부세는 사람별로 계산됩니다. 부부 공동명의 1주택은 ‘각자 납부’와 ‘특례 신청’ 중 매년 유리한 쪽을 고를 수 있습니다.</p>
+    <p class="hint">종부세는 사람별로 계산됩니다. 부부 공동명의 1주택은 ‘각자 납부’와 ‘특례 신청’ 중 매년 유리한 쪽을 고를 수 있습니다. 9·1 수정 정부안의 개별납부 공제는 납세의무자 1인당 실거주 9억 · 비거주 6억원(지분 안분 없음)이며, 특례 신청은 전체 공시가격에서 14억(실거주)·12억(비거주)을 공제합니다.</p>
     ${cmpTable}${convert}</div>`;
 }
 
@@ -1186,7 +1191,7 @@ function acqHTML(c) {
   const a = c.acq;
   return `<div class="card">
     <h2>신규 취득 — 취득세 <span class="stat info">2026 현행 지방세</span></h2>
-    <p class="hint">취득세는 지방세여서 8·3 발표(국세)에 포함되지 않았습니다. 2026년 현행 규정으로 계산합니다.</p>
+    <p class="hint">취득세는 지방세여서 세제개편안(국세)에 포함되지 않았습니다. 2026년 현행 규정으로 계산합니다.</p>
     <div class="kv"><span>적용 세율</span><span>${(a.rate * 100).toFixed(2).replace(/\.?0+$/, '')}%${a.heavy ? ' (다주택 중과)' : ''}</span></div>
     <div class="kv"><span>취득세</span><span>${won(a.main)}</span></div>
     ${a.firstCut > 0 ? `<div class="kv"><span>생애최초 감면</span><span>−${won(a.firstCut)}</span></div>` : ''}
@@ -1305,7 +1310,11 @@ function basisHTML(c) {
     <h2>근거와 한계</h2>
     <div class="kv"><span>버전</span><span>${VERSION.current} · 최근 업데이트 ${VERSION.updated.replace(/-/g, '.')}</span></div>
     <div class="kv"><span>규칙 버전</span><span>${RULES.version}</span></div>
-    <div class="kv"><span>정책 기준</span><span>2026 현행법(확정) + 8·3 정부안(심의 전)</span></div>
+    <div class="kv"><span>정책 기준</span><span>2026 현행법(확정) + 9·1 수정 정부안(국회 심의 전) · 기준일 ${RULES.policyDate}</span></div>
+    <div class="notebox"><b>정책 기준 안내</b> — ${esc(RULES.policy.reform.note)}
+      <details class="acc" style="margin-top:6px"><summary>정책 변경 이력</summary><div class="detail-body">
+        ${RULES.policyHistory.map(p => `<div style="margin:6px 0"><b>${esc(p.date)} · ${esc(p.name)}</b>${p.status === 'superseded' ? ' <span class="stat est">수정 전</span>' : ' <span class="stat chk">국회 심의 전</span>'}<ul class="notes" style="margin:4px 0 0">${p.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`).join('')}
+      </div></details></div>
     <div class="kv"><span>계산 실행</span><span>${new Date().toISOString().slice(0, 10)}</span></div>
     <details class="acc"><summary>업데이트 내역</summary><div class="detail-body">
       ${VERSION.log.map(([v, d, t]) => `<div class="kv"><span>${v} · ${d}</span><span style="text-align:left;font-weight:400;white-space:normal">${esc(t)}</span></div>`).join('')}
@@ -1446,7 +1455,7 @@ async function generatePdf() {
 function drawCompareChart(c) {
   const showCur = c.pv !== 'reform', showRef = c.pv !== 'current';
   const series = [];
-  if (showRef) series.push({ key: 'r', label: '정부안 (8·3)', varName: 's1' });
+  if (showRef) series.push({ key: 'r', label: '정부안 (9·1 수정)', varName: 's1' });
   if (showCur) series.push({ key: 'c', label: '현행 유지', varName: 's2' });
   const lg = $('#lgCmp'), host = $('#chartCmp');
   if (!lg || !host) return;

@@ -195,7 +195,7 @@ console.log('\n[이슈 5] 상속주택 단독 보유 — 1세대 1주택으로 �
   // 특례기간이 끝나도 1주택 지위 유지 (원래 1주택이므로 변화 없어야)
   T('2029 이후에도 동일하게 1주택', cur[4].jong.persons[0].deduct === 12 * 억, E.won(cur[4].jong.persons[0].deduct));
   const ref = E.holdSim(inp, 'reform');
-  T('정부안 — 비거주 1주택 공제 9억', ref[2].jong.persons[0].deduct === 9 * 억, E.won(ref[2].jong.persons[0].deduct));
+  T('정부안 — 비거주 1주택 공제 12억 (9·1 수정: 8·3안 9억 철회)', ref[2].jong.persons[0].deduct === 12 * 억, E.won(ref[2].jong.persons[0].deduct));
 
   // 일반 1채 + 상속 1채: 기존(특례로 1주택) 동작 유지 — GC-3a와 동일 구조
   const both = inputOf([

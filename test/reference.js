@@ -57,15 +57,20 @@ const AGE_C = a => a >= 70 ? .40 : a >= 65 ? .30 : a >= 60 ? .20 : 0;
 const PER_C = y => y >= 15 ? .50 : y >= 10 ? .40 : y >= 5 ? .20 : 0;
 const HALF_C = y => y >= 15 ? .25 : y >= 10 ? .20 : y >= 5 ? .10 : 0;
 
+/* 2026.9.1 국무회의 수정 정부안 (엔진과 독립 작성):
+   - 1세대1주택 기본공제: 실거주 14억 / 비거주 12억 (8·3안의 9억 축소 철회)
+   - 부부 공동명의 1주택 개별납부(dedJoint): 납세의무자 1인당 실거주 9억 / 비거주 6억 — 지분 안분 없음
+   - 일반 다주택(dedMulti): 8·3안 그대로 4억 + 5억 × 거주주택가액 비중
+   - 세부담상한(bc): 현행·수정안 모두 150% (200% 상향안 철회) */
 function refJongParams(year, scen) {
-  if (scen === 'current' || year <= 2026) return { dedOne: () => 12 * 억, dedMulti: () => 9 * 억, fair: () => .60, tbl: n => n >= 3 ? J_HEAVY : J_NORM, mode: 'hold', bc: 1.5, cap: Infinity };
-  if (year === 2027) return { dedOne: l => l ? 14 * 억 : 9 * 억, dedMulti: ls => 4 * 억 + 5 * 억 * ls, fair: () => .70, tbl: n => n >= 3 ? J_HEAVY : J_2027, mode: 'max', bc: 2.0, cap: 800 * 만 };
-  return { dedOne: l => l ? 14 * 억 : 9 * 억, dedMulti: ls => 4 * 억 + 5 * 억 * ls, fair: (n, adj, one) => one ? .70 : ((n >= 3 || adj) ? .80 : .70), tbl: () => J_2028, mode: 'live', bc: 2.0, cap: 600 * 만 };
+  if (scen === 'current' || year <= 2026) return { dedOne: () => 12 * 억, dedMulti: () => 9 * 억, dedJoint: () => 9 * 억, fair: () => .60, tbl: n => n >= 3 ? J_HEAVY : J_NORM, mode: 'hold', bc: 1.5, cap: Infinity };
+  if (year === 2027) return { dedOne: l => l ? 14 * 억 : 12 * 억, dedMulti: ls => 4 * 억 + 5 * 억 * ls, dedJoint: l => l ? 9 * 억 : 6 * 억, fair: () => .70, tbl: n => n >= 3 ? J_HEAVY : J_2027, mode: 'max', bc: 1.5, cap: 800 * 만 };
+  return { dedOne: l => l ? 14 * 억 : 12 * 억, dedMulti: ls => 4 * 억 + 5 * 억 * ls, dedJoint: l => l ? 9 * 억 : 6 * 억, fair: (n, adj, one) => one ? .70 : ((n >= 3 || adj) ? .80 : .70), tbl: () => J_2028, mode: 'live', bc: 1.5, cap: 600 * 만 };
 }
 /** 납세자 1인 종부세 — aggPBase: 지분 기준 명목 재산세 과표 합, propMainPaid: 지분 기준 재산세 본세 */
 function refJongPerson(o) {
   const P = refJongParams(o.year, o.scen);
-  const ded = o.isOne ? P.dedOne(!!o.oneLive) : P.dedMulti(o.liveShare || 0);
+  const ded = o.jointOneIndiv ? P.dedJoint(!!o.oneLive) : o.isOne ? P.dedOne(!!o.oneLive) : P.dedMulti(o.liveShare || 0);
   if (o.pubSum <= ded) return { deduct: ded, base: 0, gross: 0, propCredit: 0, credit: 0, tax: 0, rural: 0, total: 0, burdenBase: o.propMainPaid };
   const fair = P.fair(o.houseCount, !!o.hasAdj, !!o.isOne);
   const base = (o.pubSum - ded) * fair;

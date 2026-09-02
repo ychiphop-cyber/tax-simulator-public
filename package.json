@@ -3,7 +3,7 @@
   "version": "3.0.0",
   "private": true,
   "scripts": {
-    "test": "node test/units.js && node test/goldens.js && node test/issues.js && node test/issues2.js && node test/sweeps.js && node test/features.js && node test/display.js",
+    "test": "node test/units.js && node test/goldens.js && node test/issues.js && node test/issues2.js && node test/sweeps.js && node test/features.js && node test/policy91.js && node test/display.js",
     "build": "bash build.sh"
   }
 }

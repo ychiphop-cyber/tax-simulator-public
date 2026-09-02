@@ -210,7 +210,8 @@ console.log('\n추가 — 임계점 역산·비거주 1주택·취득세');
   away.houses[0].livePeriods = [];
   away.houses[0].official = 10;
   const refAway = E.holdSim(away, 'reform');
-  T('비거주 1주택 10억 — 정부안 과세(공제 9억)', refAway[1].jong.total > 0, refAway[1].jong.total);
+  // 9·1 수정 정부안: 비거주 1주택 기본공제 12억 유지(8·3안 9억 철회) → 10억은 정부안에서도 비과세
+  T('비거주 1주택 10억 — 정부안 비과세(공제 12억, 9·1 수정)', refAway[1].jong.total === 0 && refAway[1].jong.persons[0].deduct === 12 * 억, refAway[1].jong.total);
   const curAway = E.holdSim(away, 'current');
   T('비거주 1주택 10억 — 현행 비과세(공제 12억)', curAway[0].jong.total === 0);
 

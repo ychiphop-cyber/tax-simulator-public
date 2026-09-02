@@ -1,6 +1,8 @@
 'use strict';
 /* 골든 케이스 갱신값 산출기 — 엔진을 쓰지 않고 test/reference.js(법정 산식)만으로
-   과표상한 교정(이슈 3) 영향 셀을 재계산한다. 산출 근거 기록용으로 저장소에 남긴다. */
+   과표상한 교정(이슈 3) 영향 셀을 재계산한다. 산출 근거 기록용으로 저장소에 남긴다.
+   [2026-09-02] 9·1 수정 정부안: 부부 공동명의 1주택 개별납부는 jointOneIndiv(1인당 9억/6억),
+   비거주 1주택 12억, 세부담상한 150% — reference.js 갱신에 따라 GC-1/GC-2 셀 재산출. */
 const R = require('./reference.js');
 const { 억, 만 } = R;
 const f = v => (v / 만).toFixed(2) + '만';
@@ -24,7 +26,7 @@ function gc1(live) {
       const liveShare = live ? 1 : 0;
       const mk = (prev) => R.refJongPerson({
         year: y, scen: y === 2025 ? 'current' : scen,
-        pubSum: pub / 2, houseCount: 1, hasAdj: true, isOne: false, liveShare,
+        pubSum: pub / 2, houseCount: 1, hasAdj: true, isOne: false, jointOneIndiv: true, oneLive: live, liveShare,
         age: 0, holdY: 0, liveY: 0,
         aggPBase: (pub / 2) * P.fair, propMainPaid: P.main / 2, prevTotal: prev
       });
@@ -46,7 +48,7 @@ function gc1(live) {
       const spBest = Math.min(spc.me.total, spc.spouse.total);
       const jong = Math.min(indivTotal, spBest);
       if (y >= 2026) {
-        res[`${scen}${y}`] = { prop: P.total, jong, hold: P.total + jong, indivTotal, spBest };
+        res[`${scen}${y}`] = { prop: P.total, jong, hold: P.total + jong, indivTotal, spBest, me, sp: spc.me.total <= spc.spouse.total ? spc.me : spc.spouse };
       }
     }
   }
@@ -105,7 +107,7 @@ function gc2Convert() {
       const holdY = y - 2006 + 3 / 12;
       const mk = prev => R.refJongPerson({
         year: y, scen: y === 2025 ? 'current' : 'reform',
-        pubSum: pub / 2, houseCount: 1, hasAdj: true, isOne: false, liveShare: 1,
+        pubSum: pub / 2, houseCount: 1, hasAdj: true, isOne: false, jointOneIndiv: true, oneLive: true, liveShare: 1,
         age: 0, holdY, liveY: holdY,
         aggPBase: (pub / 2) * P.fair, propMainPaid: P.main / 2, prevTotal: prev
       });
@@ -152,6 +154,9 @@ const away = gc1(false), lived = gc1(true), g2 = gc2(), cv = gc2Convert(), tb = 
 console.log('=== GC-1 (비거주 joint) — 현행/정부안 보유세 ===');
 for (const y of [2026, 2027, 2028, 2029, 2030]) console.log(`${y}: cur ${f(away['current' + y].hold)}  ref ${f(away['reform' + y].hold)}  (재산세 ${f(away['current' + y].prop)})`);
 console.log('2028 정부안 개별합:', f(away.reform2028.indivTotal), '특례best:', f(away.reform2028.spBest));
+console.log('2028 정부안 개별납부 1인 상세:', JSON.stringify({ deduct: away.reform2028.me.deduct / 억, base: f(away.reform2028.me.base), gross: f(away.reform2028.me.gross), pc: f(away.reform2028.me.propCredit), total: f(away.reform2028.me.total) }));
+console.log('2028 정부안 특례 상세:', JSON.stringify({ deduct: away.reform2028.sp.deduct / 억, base: f(away.reform2028.sp.base), total: f(away.reform2028.sp.total) }));
+console.log('2027 정부안 개별합:', f(away.reform2027.indivTotal), '특례best:', f(away.reform2027.spBest));
 console.log('=== GC-1b (거주) 2028 정부안:', f(lived.reform2028.hold), ' / 2028 현행:', f(lived.current2028.hold));
 console.log('=== GC-2 — 현행/정부안 ===');
 for (const y of [2026, 2027, 2028]) console.log(`${y}: cur ${f(g2['current' + y].hold)}  ref ${f(g2['reform' + y].hold)}  (재산세 ${f(g2['current' + y].prop)})`);
